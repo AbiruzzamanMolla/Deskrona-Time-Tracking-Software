@@ -30,3 +30,7 @@ src-tauri/gen
 *.msix
 *.app
 *.dmg
+screenshots/
+app.db
+.gemini/
+release.md
