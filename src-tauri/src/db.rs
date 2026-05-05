@@ -95,12 +95,18 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
             synced_at TEXT,
             activity_status TEXT NOT NULL DEFAULT 'active'
         );
+
+        CREATE TABLE IF NOT EXISTS app_categories (
+            app_name TEXT PRIMARY KEY,
+            category TEXT NOT NULL DEFAULT 'neutral'
+        );
         ",
     )?;
 
     // Migrations for existing databases
     let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN status TEXT NOT NULL DEFAULT 'active'", []);
     let _ = conn.execute("ALTER TABLE activity_events ADD COLUMN activity_status TEXT NOT NULL DEFAULT 'active'", []);
+    let _ = conn.execute("CREATE TABLE IF NOT EXISTS app_categories (app_name TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'neutral')", []);
 
     // Insert default settings if none exists
     conn.execute(
@@ -257,6 +263,7 @@ pub struct AppUsageStat {
     pub app_name: String,
     pub total_seconds: i64,
     pub session_count: i64,
+    pub category: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -322,13 +329,19 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     // App usage stats today
     let app_stats: Vec<AppUsageStat> = {
         let mut stmt = conn.prepare(
-            "SELECT app_name, SUM(duration) as total_secs, COUNT(*) as cnt FROM time_logs WHERE user_id = 'default_user' AND date(start_time) = ?1 GROUP BY app_name ORDER BY total_secs DESC LIMIT 20"
+            "SELECT t.app_name, SUM(t.duration) as total_secs, COUNT(*) as cnt, COALESCE(c.category, 'neutral') as cat 
+             FROM time_logs t 
+             LEFT JOIN app_categories c ON t.app_name = c.app_name 
+             WHERE t.user_id = 'default_user' AND date(t.start_time) = ?1 
+             GROUP BY t.app_name 
+             ORDER BY total_secs DESC LIMIT 100"
         )?;
         let rows = stmt.query_map(params![today], |row| {
             Ok(AppUsageStat {
                 app_name: row.get(0)?,
                 total_seconds: row.get(1)?,
                 session_count: row.get(2)?,
+                category: row.get(3)?,
             })
         })?;
         rows.filter_map(|r| r.ok()).collect()
@@ -371,13 +384,13 @@ pub struct TimeLogEntry {
     pub status: String,
 }
 
-pub fn get_time_logs_range(app: &AppHandle, from: &str, to: &str) -> Result<Vec<TimeLogEntry>> {
+pub fn get_time_logs_range(app: &AppHandle, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<TimeLogEntry>> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, app_name, window_title, start_time, COALESCE(end_time,''), COALESCE(duration,0), COALESCE(status,'active') FROM time_logs WHERE user_id='default_user' AND date(start_time) >= ?1 AND date(start_time) <= ?2 ORDER BY start_time DESC LIMIT 500"
+        "SELECT id, app_name, window_title, start_time, COALESCE(end_time,''), COALESCE(duration,0), COALESCE(status,'active') FROM time_logs WHERE user_id='default_user' AND date(start_time) >= ?1 AND date(start_time) <= ?2 ORDER BY start_time DESC LIMIT ?3 OFFSET ?4"
     )?;
-    let rows = stmt.query_map(params![from, to], |row| {
+    let rows = stmt.query_map(params![from, to, limit, offset], |row| {
         Ok(TimeLogEntry {
             id: row.get(0)?,
             app_name: row.get(1)?,
@@ -401,13 +414,13 @@ pub struct UrlEntryFull {
     pub activity_status: String,
 }
 
-pub fn get_urls_range(app: &AppHandle, from: &str, to: &str) -> Result<Vec<UrlEntryFull>> {
+pub fn get_urls_range(app: &AppHandle, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<UrlEntryFull>> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, type, timestamp, COALESCE(activity_status,'active') FROM activity_events WHERE type LIKE 'url:%' AND date(timestamp) >= ?1 AND date(timestamp) <= ?2 ORDER BY timestamp DESC LIMIT 500"
+        "SELECT id, type, timestamp, COALESCE(activity_status,'active') FROM activity_events WHERE type LIKE 'url:%' AND date(timestamp) >= ?1 AND date(timestamp) <= ?2 ORDER BY timestamp DESC LIMIT ?3 OFFSET ?4"
     )?;
-    let rows = stmt.query_map(params![from, to], |row| {
+    let rows = stmt.query_map(params![from, to, limit, offset], |row| {
         let raw: String = row.get(1)?;
         Ok(UrlEntryFull {
             id: row.get(0)?,
@@ -428,13 +441,13 @@ pub struct ScreenshotEntry {
     pub captured_at: String,
 }
 
-pub fn get_screenshots_range(app: &AppHandle, from: &str, to: &str) -> Result<Vec<ScreenshotEntry>> {
+pub fn get_screenshots_range(app: &AppHandle, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<ScreenshotEntry>> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, file_path, captured_at FROM screenshots WHERE user_id='default_user' AND date(captured_at) >= ?1 AND date(captured_at) <= ?2 ORDER BY captured_at DESC LIMIT 200"
+        "SELECT id, file_path, captured_at FROM screenshots WHERE user_id='default_user' AND date(captured_at) >= ?1 AND date(captured_at) <= ?2 ORDER BY captured_at DESC LIMIT ?3 OFFSET ?4"
     )?;
-    let rows = stmt.query_map(params![from, to], |row| {
+    let rows = stmt.query_map(params![from, to, limit, offset], |row| {
         Ok(ScreenshotEntry {
             id: row.get(0)?,
             file_path: row.get(1)?,
@@ -477,5 +490,16 @@ pub fn get_screenshot_interval_secs(app: &AppHandle) -> u64 {
         return (settings.screenshot_interval as u64) * 60;
     }
     600 // default 10 min
+}
+
+pub fn update_app_category(app: &AppHandle, app_name: &str, category: &str) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    conn.execute(
+        "INSERT INTO app_categories (app_name, category) VALUES (?1, ?2)
+         ON CONFLICT(app_name) DO UPDATE SET category = excluded.category",
+        params![app_name, category],
+    )?;
+    Ok(())
 }
 

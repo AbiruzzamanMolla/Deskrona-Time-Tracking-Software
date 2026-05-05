@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$VERSION = "0.0.1"
+$VERSION = "0.0.3"
 
 Write-Host "Committing changes..."
 git add .
@@ -24,7 +24,7 @@ Write-Host "Creating GitHub Release..."
 gh.exe release delete "v$VERSION" --yes 2>$null
 gh.exe release create "v$VERSION" `
   --title "Time Guardian v$VERSION" `
-  --notes "Initial MVP Release with full tracking, dashboard, and screenshots." `
+  --notes-file "CHANGELOG.md" `
   (Get-Item "src-tauri/target/release/bundle/msi/*.msi").FullName `
   (Get-Item "src-tauri/target/release/bundle/nsis/*.exe").FullName `
   (Get-Item "src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi").FullName `

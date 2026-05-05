@@ -184,7 +184,20 @@ pub fn start_tracking(app: AppHandle) {
             }
 
             // --- Active Window Tracking ---
-            match get_active_window() {
+            let active_window_result = if state == 2 {
+                Ok(active_win_pos_rs::ActiveWindow {
+                    title: "Break Time".to_string(),
+                    process_path: std::path::PathBuf::new(),
+                    app_name: "Time Guardian".to_string(),
+                    window_id: String::new(),
+                    process_id: 0,
+                    position: active_win_pos_rs::WindowPosition { x: 0.0, y: 0.0, width: 0.0, height: 0.0 },
+                })
+            } else {
+                get_active_window()
+            };
+
+            match active_window_result {
                 Ok(window) => {
                     let mut current = current_window.lock().unwrap();
                     let now = Utc::now();
@@ -201,6 +214,7 @@ pub fn start_tracking(app: AppHandle) {
                             let duration = (now - cw.start_time).num_seconds();
                             if duration > 0 {
                                 if let Ok(conn) = Connection::open(&db_path) {
+                                    let status = if cw.window_title == "Break Time" { "paused" } else { "active" };
                                     let _ = conn.execute(
                                         "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
                                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -214,21 +228,23 @@ pub fn start_tracking(app: AppHandle) {
                                             &duration,
                                             &now.to_rfc3339(),
                                             &now.to_rfc3339(),
-                                            "active",
+                                            status,
                                         ),
                                     );
 
-                                    if let Some(url_context) =
-                                        extract_url_from_title(&cw.app_name, &cw.window_title)
-                                    {
-                                        let _ = conn.execute(
-                                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, ?3, ?3, NULL, 'active')",
-                                            (
-                                                Uuid::new_v4().to_string(),
-                                                format!("url:{}", url_context),
-                                                now.to_rfc3339(),
-                                            ),
-                                        );
+                                    if status == "active" {
+                                        if let Some(url_context) =
+                                            extract_url_from_title(&cw.app_name, &cw.window_title)
+                                        {
+                                            let _ = conn.execute(
+                                                "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, ?3, ?3, NULL, 'active')",
+                                                (
+                                                    Uuid::new_v4().to_string(),
+                                                    format!("url:{}", url_context),
+                                                    now.to_rfc3339(),
+                                                ),
+                                            );
+                                        }
                                     }
                                 }
                             }

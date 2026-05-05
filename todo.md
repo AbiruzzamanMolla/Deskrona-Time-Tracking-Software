@@ -56,17 +56,39 @@
 
 ## 📊 Phase 5: Productivity & Reporting
 
-- [ ] Productivity scoring logic
-- [ ] Categorize apps (productive vs unproductive)
-- [ ] Generate summary reports (charts and graphs in UI)
+- [x] Productivity scoring logic
+- [x] Categorize apps (productive vs unproductive)
+- [x] Generate summary reports (charts and graphs in UI)
 
 ## 🔁 Phase 6: Synchronization & Polish
 
-- [ ] Prepare sync-ready schema refinements
+- [ ] Prepare sync-ready schema refinements (Add `deleted_at` for soft deletes)
 - [ ] Resolve conflict logic for future cloud sync
+- [ ] Implement multi-platform permission handling (macOS Screen Recording/Accessibility)
 - [ ] Refine UI/UX for premium feel
+
+## 🔁 Phase 6.5: Taskbar Operations
+
+- [x] Add operations on taskbar icon (start, stop, pause)
+- [x] Show active session time on taskbar
+- [x] Show current time in taskbar
+- [x] Update logics and UI to calcuatle pause as break time.
 
 ## 🤖 Phase 7: AI Insights (Optional)
 
 - [ ] AI-based time usage summary
 - [ ] Local ML model integration for behavior patterns
+
+## 🏢 Phase 8: Enterprise & Multi-User Architecture (Admin -> Company -> User)
+
+- [ ] **Hierarchical Identity System**: Implement multi-tenant schema where a `Company` is the root entity. Admins are registered as standard users (tracked by default) with an elevated `admin` role.
+- [ ] **Local Authentication & Security**: Develop a local login system using password hashing (Argon2/PBKDF2) and secure session token persistence to allow background tracking to resume automatically on system boot.
+- [ ] **Multi-Tenant Data Isolation**: Update the database engine to require `company_id` and `user_id` on all tracking entries (logs, screenshots, events) for strict data partitioning.
+- [ ] **Administrative Privileges & UI**: Create a role-restricted Admin Dashboard for managing (adding/removing) company users and accessing aggregated employee productivity statistics.
+- [ ] **Role-Based Frontend Logic**: Implement UI state management that dynamically toggles management features for Admins while keeping the interface focused for standard Employees.
+
+## 🔐 Phase 9: Security & Privacy
+
+- [ ] Add Privacy Notice/In-app notification about tracking active state
+- [ ] Implement OS-level permission request flows for macOS/Linux
+- [ ] Explore local database encryption for sensitive metadata (Optional)

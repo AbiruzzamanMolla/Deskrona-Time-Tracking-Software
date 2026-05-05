@@ -2,6 +2,21 @@
 
 All notable changes to **Time Guardian** will be documented in this file.
 
+## [0.0.3] - 2026-05-05
+
+### ✨ Added
+- **Pagination**: Added pagination (Load More) functionality to All Trackings, Browser History, and Screenshots views to optimize database queries.
+- **Enhanced Tracking List**: The "All Trackings" view now displays both start and end times for better session clarity.
+- **System Tray Menu**: Added a taskbar icon with right-click menu operations to quickly Start, Pause, or Stop tracking.
+- **Dynamic Taskbar Title**: The window title now dynamically updates to show active session time and current clock time, visible in the OS taskbar.
+- **Break Time Tracking**: Pausing the tracker now automatically records the paused duration as "Break Time" in the time logs.
+- **Productivity Scoring**: Added logic to categorize and score daily time blocks.
+- **App Categorization**: Users can now assign apps into 'Productive', 'Unproductive', or 'Neutral' categories.
+- **Visual Reports**: Built a new "Productivity" view featuring dynamic Chart.js donut graphs to visualize work efficiency.
+
+### 🐛 Fixed
+- **Screenshot Visibility**: Resolved an issue where locally stored screenshots were not correctly rendering in the UI.
+
 ## [0.0.2] - 2026-05-05
 
 ### ✨ Added

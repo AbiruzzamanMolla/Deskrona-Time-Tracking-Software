@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { onMounted, onUnmounted, ref, watch, computed } from "vue";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
+import { Pie } from 'vue-chartjs';
+import { Chart as ChartJS, Title, Tooltip, Legend, ArcElement } from 'chart.js';
+
+ChartJS.register(Title, Tooltip, Legend, ArcElement);
 
 const { t, locale } = useI18n();
 
@@ -27,6 +32,7 @@ interface AppUsageStat {
   app_name: string;
   total_seconds: number;
   session_count: number;
+  category: string;
 }
 
 interface UrlEntry {
@@ -85,7 +91,13 @@ const dashboardData = ref<DashboardData>({
   recent_urls: [],
 });
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
+let taskbarInterval: ReturnType<typeof setInterval> | null = null;
 const trackingStatus = ref<string>('running');
+const defaultScreenshotDir = ref<string>('');
+
+// Accumulated paused seconds — updated each time we enter/leave pause state
+const pausedSeconds = ref(0);
+let pauseStartedAt: number | null = null;
 
 const filterType = ref('daily');
 const customFromDate = ref(new Date().toISOString().split('T')[0]);
@@ -95,6 +107,11 @@ const timeLogsList = ref<TimeLogEntry[]>([]);
 const urlsList = ref<UrlEntryFull[]>([]);
 const screenshotsList = ref<ScreenshotEntry[]>([]);
 
+const timeLogsOffset = ref(0);
+const urlsOffset = ref(0);
+const screenshotsOffset = ref(0);
+const pageSize = 50;
+
 // ─── Helpers ──────────────────────────────────────────────────────
 const formatTime = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
@@ -103,6 +120,45 @@ const formatTime = (seconds: number): string => {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+};
+
+const updateCategory = async (appName: string, category: string) => {
+  try {
+    await invoke("cmd_update_app_category", { appName, category });
+    const app = dashboardData.value.app_stats.find(a => a.app_name === appName);
+    if (app) app.category = category;
+  } catch (error) {
+    console.error("Failed to update category:", error);
+  }
+};
+
+const productivityChartData = computed(() => {
+  let productive = 0;
+  let unproductive = 0;
+  let neutral = 0;
+
+  dashboardData.value.app_stats.forEach(stat => {
+    if (stat.category === 'productive') productive += stat.total_seconds;
+    else if (stat.category === 'unproductive') unproductive += stat.total_seconds;
+    else neutral += stat.total_seconds;
+  });
+
+  return {
+    labels: ['Productive', 'Unproductive', 'Neutral'],
+    datasets: [{
+      backgroundColor: ['#10b981', '#ef4444', '#64748b'],
+      data: [productive, unproductive, neutral],
+      borderWidth: 0,
+      hoverOffset: 4
+    }]
+  };
+});
+const productivityChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { position: 'bottom' as const, labels: { color: '#94a3b8' } }
+  }
 };
 
 const formatTimestamp = (ts: string): string => {
@@ -234,8 +290,18 @@ const loadTrackingStatus = async () => {
 const setTracking = async (status: string) => {
   try {
     await invoke("cmd_set_tracking", { status });
+    // Accumulate pause duration
+    if (status === 'paused') {
+      pauseStartedAt = Date.now();
+    } else if (status === 'running' && pauseStartedAt !== null) {
+      pausedSeconds.value += Math.floor((Date.now() - pauseStartedAt) / 1000);
+      pauseStartedAt = null;
+    } else if (status === 'stopped') {
+      pausedSeconds.value = 0;
+      pauseStartedAt = null;
+    }
     trackingStatus.value = status;
-  } catch (e) { console.error("Failed to set tracking:", e); }
+  } catch (e) { console.error("Failed to set tracking:", e); } }
 };
 
 // ─── Filtered Data ───────────────────────────────────────────────
@@ -259,25 +325,35 @@ const getDateRange = () => {
   };
 };
 
-const loadFilteredData = async () => {
+const loadFilteredData = async (append = false) => {
   const { from, to } = getDateRange();
   try {
     if (currentView.value === 'trackings') {
-      timeLogsList.value = await invoke('cmd_get_time_logs_range', { from, to });
+      if (!append) timeLogsOffset.value = 0;
+      const data = await invoke<TimeLogEntry[]>('cmd_get_time_logs_range', { from, to, limit: pageSize, offset: timeLogsOffset.value });
+      timeLogsList.value = append ? [...timeLogsList.value, ...data] : data;
     } else if (currentView.value === 'urls') {
-      urlsList.value = await invoke('cmd_get_urls_range', { from, to });
+      if (!append) urlsOffset.value = 0;
+      const data = await invoke<UrlEntryFull[]>('cmd_get_urls_range', { from, to, limit: pageSize, offset: urlsOffset.value });
+      urlsList.value = append ? [...urlsList.value, ...data] : data;
     } else if (currentView.value === 'screenshots') {
-      screenshotsList.value = await invoke('cmd_get_screenshots_range', { from, to });
+      if (!append) screenshotsOffset.value = 0;
+      const data = await invoke<ScreenshotEntry[]>('cmd_get_screenshots_range', { from, to, limit: pageSize, offset: screenshotsOffset.value });
+      screenshotsList.value = append ? [...screenshotsList.value, ...data] : data;
     }
   } catch (e) {
     console.error("Failed to load filtered data", e);
   }
 };
 
+const loadMoreTrackings = () => { timeLogsOffset.value += pageSize; loadFilteredData(true); };
+const loadMoreUrls = () => { urlsOffset.value += pageSize; loadFilteredData(true); };
+const loadMoreScreenshots = () => { screenshotsOffset.value += pageSize; loadFilteredData(true); };
+
 // ─── Watchers ────────────────────────────────────────────────────
 watch([currentView, filterType, customFromDate, customToDate], () => {
   if (['trackings', 'urls', 'screenshots'].includes(currentView.value)) {
-    loadFilteredData();
+    loadFilteredData(false);
   }
 });
 
@@ -289,17 +365,55 @@ watch(settings, async (newVal, oldVal) => {
   }
 }, { deep: true });
 
+
+
 onMounted(async () => {
   await loadSettings();
+  defaultScreenshotDir.value = await invoke("cmd_get_screenshot_dir");
   await loadActiveSession();
   await loadTrackingStatus();
   await refreshDashboard();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
-  refreshInterval = setInterval(refreshDashboard, 5000);
+  
+  refreshInterval = setInterval(refreshDashboard, 5000) as unknown as number;
+  
+  taskbarInterval = setInterval(() => {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const status = trackingStatus.value;
+
+    if (activeSession.value && status === 'running') {
+      const start = new Date(activeSession.value.start_time);
+      const totalElapsed = Math.floor((now.getTime() - start.getTime()) / 1000);
+      const netActive = Math.max(0, totalElapsed - pausedSeconds.value);
+      const activeStr = formatTime(netActive);
+      document.title = `▶ ${activeStr} | ${timeStr} — Time Guardian`;
+    } else if (status === 'paused') {
+      document.title = `⏸ Paused | ${timeStr} — Time Guardian`;
+    } else {
+      document.title = `⏹ Stopped | ${timeStr} — Time Guardian`;
+    }
+  }, 1000) as unknown as number;
+
+  await listen<string>("tracking-status-changed", (event) => {
+    const newStatus = event.payload;
+    // Sync pause accumulator for tray icon actions
+    if (newStatus === 'paused' && trackingStatus.value !== 'paused') {
+      pauseStartedAt = Date.now();
+    } else if (newStatus === 'running' && trackingStatus.value === 'paused' && pauseStartedAt !== null) {
+      pausedSeconds.value += Math.floor((Date.now() - pauseStartedAt) / 1000);
+      pauseStartedAt = null;
+    } else if (newStatus === 'stopped') {
+      pausedSeconds.value = 0;
+      pauseStartedAt = null;
+    }
+    trackingStatus.value = newStatus;
+  });
 });
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval);
+  if (taskbarInterval) clearInterval(taskbarInterval);
 });
 </script>
 
@@ -319,6 +433,9 @@ onUnmounted(() => {
         </button>
         <button :class="{ active: currentView === 'urls' }" @click="currentView = 'urls'">
           🌐 {{ t('message.urls') }}
+        </button>
+        <button :class="{ active: currentView === 'productivity' }" @click="currentView = 'productivity'">
+          📈 Productivity
         </button>
         <button :class="{ active: currentView === 'screenshots' }" @click="currentView = 'screenshots'">
           📸 {{ t('message.screenshots') }}
@@ -462,23 +579,28 @@ onUnmounted(() => {
         </header>
 
         <div class="app-table">
-          <div class="app-row header-row" style="grid-template-columns: 2fr 3fr 1fr 1fr;">
+          <div class="app-row header-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
             <span>{{ t('message.appName') }}</span>
             <span>Title</span>
             <span>Start</span>
+            <span>End</span>
             <span>{{ t('message.timeSpent') }}</span>
           </div>
-          <div v-for="log in timeLogsList" :key="log.id" class="app-row" style="grid-template-columns: 2fr 3fr 1fr 1fr;">
+          <div v-for="log in timeLogsList" :key="log.id" class="app-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
             <span class="app-name">
               <span class="app-icon">{{ appIcon(log.app_name) }}</span>
               {{ log.app_name }}
             </span>
             <span class="url-text" :title="log.window_title">{{ log.window_title }}</span>
             <span class="url-time">{{ formatTimestamp(log.start_time) }}</span>
+            <span class="url-time">{{ log.end_time ? formatTimestamp(log.end_time) : '-' }}</span>
             <span class="app-time">{{ formatTime(log.duration) }}</span>
           </div>
           <div v-if="timeLogsList.length === 0" class="empty-state">
             <p>{{ t('message.noData') }}</p>
+          </div>
+          <div v-else-if="timeLogsList.length % pageSize === 0" class="load-more-container">
+            <button class="btn-start" @click="loadMoreTrackings">Load More</button>
           </div>
         </div>
       </div>
@@ -511,6 +633,9 @@ onUnmounted(() => {
           <div v-if="urlsList.length === 0" class="empty-state">
             <p>{{ t('message.noUrls') }}</p>
           </div>
+          <div v-else-if="urlsList.length % pageSize === 0" class="load-more-container">
+            <button class="btn-start" @click="loadMoreUrls">Load More</button>
+          </div>
         </div>
       </div>
 
@@ -536,13 +661,58 @@ onUnmounted(() => {
 
         <div class="screenshots-grid">
           <div v-for="shot in screenshotsList" :key="shot.id" class="screenshot-card">
-            <img :src="'asset://localhost/' + shot.file_path" alt="Screenshot" loading="lazy" />
+            <img :src="convertFileSrc(shot.file_path)" alt="Screenshot" loading="lazy" />
             <div class="screenshot-info">
               <span>{{ formatTimestamp(shot.captured_at) }}</span>
             </div>
           </div>
           <div v-if="screenshotsList.length === 0" class="empty-state" style="grid-column: 1 / -1;">
             <p>{{ t('message.noData') }}</p>
+          </div>
+          <div v-else-if="screenshotsList.length % pageSize === 0" class="load-more-container" style="grid-column: 1 / -1;">
+            <button class="btn-start" @click="loadMoreScreenshots">Load More</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PRODUCTIVITY VIEW -->
+      <div v-if="currentView === 'productivity'" class="view-productivity">
+        <header>
+          <h1>Productivity</h1>
+        </header>
+
+        <div class="productivity-grid" style="display: grid; grid-template-columns: 1fr 2fr; gap: 24px; padding: 16px;">
+          <div class="card chart-container" style="height: 300px;">
+            <h3>Productivity Breakdown (Today)</h3>
+            <Pie :data="productivityChartData" :options="productivityChartOptions" />
+          </div>
+
+          <div class="card">
+            <h3>App Categories</h3>
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Application</th>
+                    <th>Time Spent</th>
+                    <th>Category</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="stat in dashboardData.app_stats" :key="stat.app_name">
+                    <td>{{ stat.app_name }}</td>
+                    <td>{{ formatTime(stat.total_seconds) }}</td>
+                    <td>
+                      <select v-model="stat.category" @change="updateCategory(stat.app_name, stat.category)">
+                        <option value="productive">Productive</option>
+                        <option value="neutral">Neutral</option>
+                        <option value="unproductive">Unproductive</option>
+                      </select>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -579,7 +749,7 @@ onUnmounted(() => {
           <div class="card setting-card">
             <label>{{ t('message.screenshotLocation') }}</label>
             <div class="input-with-button">
-              <input type="text" v-model="settings.screenshot_location" placeholder="/default/path" />
+              <input type="text" v-model="settings.screenshot_location" :placeholder="defaultScreenshotDir" />
               <button class="btn-browse" @click="selectScreenshotLocation">📁</button>
             </div>
           </div>
@@ -831,13 +1001,15 @@ header h1 { margin-top: 0; margin-bottom: 24px; font-size: 1.8rem; font-weight: 
   font-size: 0.88rem;
 }
 .url-row:last-child { border-bottom: none; }
-.url-time {
-  color: var(--text-muted);
-  font-weight: 500;
-  white-space: nowrap;
-  min-width: 70px;
+.url-time { color: var(--text-muted); font-size: 0.85rem; min-width: 80px; }
+.url-text { color: var(--accent); font-weight: 500; word-break: break-all; }
+
+.load-more-container {
+  padding: 16px;
+  text-align: center;
+  border-top: 1px solid var(--border-color);
 }
-.url-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.load-more-container button { max-width: 200px; }
 
 .empty-state {
   padding: 40px;
