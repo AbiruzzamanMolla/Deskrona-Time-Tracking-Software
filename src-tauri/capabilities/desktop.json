@@ -11,8 +11,7 @@
   "permissions": [
     "core:default",
     "autostart:default",
-    "dialog:all",
-    "opener:default",
-    "fs:default"
+    "dialog:default",
+    "opener:default"
   ]
 }
