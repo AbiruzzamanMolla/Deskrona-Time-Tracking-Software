@@ -112,29 +112,29 @@ pub fn start_tracking(app: AppHandle) {
             let state = TRACKING_STATE.load(Ordering::SeqCst);
             if state == 0 || state == 2 {
                 // Stopped or Paused: flush current window if any
-                if state == 0 {
-                    let mut current = current_window.lock().unwrap();
-                    if let Some(cw) = current.take() {
-                        let now = Utc::now();
-                        let duration = (now - cw.start_time).num_seconds();
-                        if duration > 0 {
-                            if let Ok(conn) = Connection::open(&db_path) {
-                                let _ = conn.execute(
-                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at)
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                                    (
-                                        Uuid::new_v4().to_string(),
-                                        "default_user",
-                                        &cw.app_name,
-                                        &cw.window_title,
-                                        &cw.start_time.to_rfc3339(),
-                                        &now.to_rfc3339(),
-                                        &duration,
-                                        &now.to_rfc3339(),
-                                        &now.to_rfc3339(),
-                                    ),
-                                );
-                            }
+                let mut current = current_window.lock().unwrap();
+                if let Some(cw) = current.take() {
+                    let now = Utc::now();
+                    let duration = (now - cw.start_time).num_seconds();
+                    if duration > 0 {
+                        if let Ok(conn) = Connection::open(&db_path) {
+                            let status = if state == 2 { "paused" } else { "active" };
+                            let _ = conn.execute(
+                                "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                (
+                                    Uuid::new_v4().to_string(),
+                                    "default_user",
+                                    &cw.app_name,
+                                    &cw.window_title,
+                                    &cw.start_time.to_rfc3339(),
+                                    &now.to_rfc3339(),
+                                    &duration,
+                                    &now.to_rfc3339(),
+                                    &now.to_rfc3339(),
+                                    status,
+                                ),
+                            );
                         }
                     }
                 }
@@ -159,7 +159,7 @@ pub fn start_tracking(app: AppHandle) {
                 if was_idle {
                     if let Ok(conn) = Connection::open(&db_path) {
                         let _ = conn.execute(
-                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at) VALUES (?1, 'idle_end', ?2, ?2, NULL)",
+                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, 'idle_end', ?2, ?2, NULL, 'active')",
                             (Uuid::new_v4().to_string(), Utc::now().to_rfc3339()),
                         );
                     }
@@ -175,7 +175,7 @@ pub fn start_tracking(app: AppHandle) {
                     *idle = true;
                     if let Ok(conn) = Connection::open(&db_path) {
                         let _ = conn.execute(
-                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at) VALUES (?1, 'idle_start', ?2, ?2, NULL)",
+                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, 'idle_start', ?2, ?2, NULL, 'idle')",
                             (Uuid::new_v4().to_string(), Utc::now().to_rfc3339()),
                         );
                     }
@@ -202,8 +202,8 @@ pub fn start_tracking(app: AppHandle) {
                             if duration > 0 {
                                 if let Ok(conn) = Connection::open(&db_path) {
                                     let _ = conn.execute(
-                                        "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at)
-                                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                        "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
+                                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                                         (
                                             Uuid::new_v4().to_string(),
                                             "default_user",
@@ -214,6 +214,7 @@ pub fn start_tracking(app: AppHandle) {
                                             &duration,
                                             &now.to_rfc3339(),
                                             &now.to_rfc3339(),
+                                            "active",
                                         ),
                                     );
 
@@ -221,7 +222,7 @@ pub fn start_tracking(app: AppHandle) {
                                         extract_url_from_title(&cw.app_name, &cw.window_title)
                                     {
                                         let _ = conn.execute(
-                                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at) VALUES (?1, ?2, ?3, ?3, NULL)",
+                                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, ?3, ?3, NULL, 'active')",
                                             (
                                                 Uuid::new_v4().to_string(),
                                                 format!("url:{}", url_context),

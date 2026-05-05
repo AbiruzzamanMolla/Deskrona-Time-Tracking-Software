@@ -8,10 +8,8 @@ git commit -m "chore: release v$VERSION"
 git push origin main
 
 Write-Host "Tagging..."
-git tag -d "v$VERSION" 2>$null
-git push origin :refs/tags/"v$VERSION" 2>$null
-git tag -a "v$VERSION" -m "Release v$VERSION"
-git push origin "v$VERSION"
+git tag -a "v$VERSION" -m "Release v$VERSION" -f
+git push origin "v$VERSION" -f
 
 Write-Host "Building 64-bit..."
 npm run tauri build
