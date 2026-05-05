@@ -301,7 +301,7 @@ const setTracking = async (status: string) => {
       pauseStartedAt = null;
     }
     trackingStatus.value = status;
-  } catch (e) { console.error("Failed to set tracking:", e); } }
+  } catch (e) { console.error("Failed to set tracking:", e); }
 };
 
 // ─── Filtered Data ───────────────────────────────────────────────
