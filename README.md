@@ -9,6 +9,7 @@
 - **Intelligent Tracking**: Automatic detection of active applications, window titles, and browser URLs.
 - **Powerful Reporting**: Specialized dashboard views with dynamic date-range filtering (Daily, Weekly, Monthly, Yearly, Custom).
 - **Idle Detection**: Tracks keyboard and mouse inactivity to provide accurate "Active vs. Idle" time analysis.
+- **Backup & Data Integrity**: Automated, configurable database backups with manual export and import support.
 - **Cross-Platform**: Windows installer support (32/64-bit EXE and MSI).
 - **Multilingual Support**: Fully localized in English and Bengali.
 - **Theming**: Premium Dark/Light mode support.

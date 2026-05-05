@@ -2,6 +2,13 @@
 
 All notable changes to **Time Guardian** will be documented in this file.
 
+## [0.0.2] - 2026-05-05
+
+### ✨ Added
+- **Backup & Data Integrity**: Local database backup system with customizable interval (daily, weekly) and location.
+- **Manual Data Export/Import**: Added user-friendly settings UI to manually export and import `.db` SQLite files.
+- Completed Phase 4 roadmap goals.
+
 ## [0.0.1] - 2026-05-05
 
 ### ✨ Added

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
 
 const { t, locale } = useI18n();
@@ -170,6 +170,26 @@ const selectScreenshotLocation = async () => {
 const selectBackupLocation = async () => {
   const selected = await open({ directory: true, multiple: false, title: t('message.backupLocation'), defaultPath: settings.value.backup_location || undefined });
   if (selected && typeof selected === 'string') settings.value.backup_location = selected;
+};
+
+const exportData = async () => {
+  const selected = await save({ filters: [{ name: 'Database', extensions: ['db'] }], title: t('message.exportData') });
+  if (selected && typeof selected === 'string') {
+    try {
+      await invoke('cmd_export_db', { path: selected });
+      alert(t('message.dataExportSuccess'));
+    } catch (e) { console.error('Export failed:', e); }
+  }
+};
+
+const importData = async () => {
+  const selected = await open({ directory: false, multiple: false, filters: [{ name: 'Database', extensions: ['db'] }], title: t('message.importData') });
+  if (selected && typeof selected === 'string') {
+    try {
+      await invoke('cmd_import_db', { path: selected });
+      alert(t('message.dataImportSuccess'));
+    } catch (e) { console.error('Import failed:', e); }
+  }
 };
 
 // ─── Session Management ──────────────────────────────────────────
@@ -577,6 +597,14 @@ onUnmounted(() => {
               <input type="text" v-model="settings.backup_location" placeholder="/backup/path" />
               <button class="btn-browse" @click="selectBackupLocation">📁</button>
             </div>
+          </div>
+          <div class="card setting-card">
+            <label>{{ t('message.exportData') }}</label>
+            <button class="btn-browse" style="width:100%; padding: 8px; margin-top: 8px;" @click="exportData">{{ t('message.exportData') }}</button>
+          </div>
+          <div class="card setting-card">
+            <label>{{ t('message.importData') }}</label>
+            <button class="btn-browse" style="width:100%; padding: 8px; margin-top: 8px;" @click="importData">{{ t('message.importData') }}</button>
           </div>
         </div>
       </div>

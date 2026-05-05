@@ -1,5 +1,6 @@
 mod db;
 mod tracking;
+mod backup;
 
 use tauri_plugin_autostart::ManagerExt;
 
@@ -105,6 +106,9 @@ pub fn run() {
             // Start background tracking
             tracking::start_tracking(app.handle().clone());
 
+            // Start backup scheduler
+            backup::start_backup_scheduler(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -121,7 +125,9 @@ pub fn run() {
             cmd_get_tracking,
             cmd_get_time_logs_range,
             cmd_get_urls_range,
-            cmd_get_screenshots_range
+            cmd_get_screenshots_range,
+            backup::cmd_export_db,
+            backup::cmd_import_db
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
