@@ -4,12 +4,14 @@
 
 ## 🚀 Key Features
 
-- **Local-First Architecture**: Your data never leaves your computer unless you explicitly choose to sync it.
-- **Cross-Platform**: Seamlessly works on Windows, macOS, and Linux.
-- **Background Tracking**: Automatically monitors active applications and window titles to track your work accurately.
-- **Privacy-Centric**: Fully offline functionality by default.
-- **Multilingual Support**: Available in multiple languages (English and Bengali currently supported).
-- **Dark/Light Mode**: Full theme support to match your system preferences.
+- **Local-First Architecture**: Your data never leaves your computer. SQLite-based storage for high performance and privacy.
+- **Advanced Monitoring**: Automated multi-monitor screenshot capture at configurable intervals.
+- **Intelligent Tracking**: Automatic detection of active applications, window titles, and browser URLs.
+- **Powerful Reporting**: Specialized dashboard views with dynamic date-range filtering (Daily, Weekly, Monthly, Yearly, Custom).
+- **Idle Detection**: Tracks keyboard and mouse inactivity to provide accurate "Active vs. Idle" time analysis.
+- **Cross-Platform**: Windows installer support (32/64-bit EXE and MSI).
+- **Multilingual Support**: Fully localized in English and Bengali.
+- **Theming**: Premium Dark/Light mode support.
 
 ## 🧱 Tech Stack
 
