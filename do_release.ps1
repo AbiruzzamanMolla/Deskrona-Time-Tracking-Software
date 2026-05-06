@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$VERSION = "0.0.4"
+$VERSION = "0.0.5"
 
 Write-Host "Committing changes..."
 git add .
