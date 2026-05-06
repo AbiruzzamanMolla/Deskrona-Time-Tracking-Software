@@ -21,7 +21,7 @@ Write-Host "Building 32-bit..."
 cmd /c npm run tauri build -- -t i686-pc-windows-msvc
 
 Write-Host "Creating GitHub Release..."
-gh.exe release delete "v$VERSION" --yes 2>$null
+try { gh.exe release delete "v$VERSION" --yes 2>$null } catch {}
 gh.exe release create "v$VERSION" `
   --title "Time Guardian v$VERSION" `
   --notes-file "CHANGELOG.md" `
