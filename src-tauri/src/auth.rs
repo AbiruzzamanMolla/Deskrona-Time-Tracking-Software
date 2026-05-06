@@ -326,6 +326,8 @@ pub struct UserProductivityStat {
     pub username: String,
     pub total_active_seconds: i64,
     pub session_count: i64,
+    pub keyboard_count: i64,
+    pub mouse_count: i64,
 }
 
 pub fn get_admin_stats(app: &AppHandle, company_id: &str) -> Result<Vec<UserProductivityStat>, String> {
@@ -338,7 +340,9 @@ pub fn get_admin_stats(app: &AppHandle, company_id: &str) -> Result<Vec<UserProd
         .prepare(
             "SELECT u.id, u.display_name, u.username,
                     COALESCE(SUM(t.duration), 0) as active_secs,
-                    COUNT(DISTINCT s.id) as sess_count
+                    COUNT(DISTINCT s.id) as sess_count,
+                    (SELECT COUNT(*) FROM activity_events WHERE user_id = u.id AND type = 'keyboard' AND date(timestamp) = ?1) as kb_count,
+                    (SELECT COUNT(*) FROM activity_events WHERE user_id = u.id AND type = 'mouse' AND date(timestamp) = ?1) as ms_count
              FROM auth_users u
              LEFT JOIN time_logs t ON t.user_id = u.id AND date(t.start_time) = ?1
              LEFT JOIN sessions s ON s.user_id = u.id AND date(s.start_time) = ?1
@@ -356,6 +360,8 @@ pub fn get_admin_stats(app: &AppHandle, company_id: &str) -> Result<Vec<UserProd
                 username: r.get(2)?,
                 total_active_seconds: r.get(3)?,
                 session_count: r.get(4)?,
+                keyboard_count: r.get(5)?,
+                mouse_count: r.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?;

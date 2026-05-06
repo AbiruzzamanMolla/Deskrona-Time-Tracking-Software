@@ -16,6 +16,7 @@ interface Settings {
   theme: string;
   auto_start_on_boot: boolean;
   screenshot_interval: number;
+  is_screenshot_enabled: boolean;
   screenshot_location: string;
   backup_frequency: string;
   backup_location: string;
@@ -47,6 +48,8 @@ interface DashboardData {
   session_seconds: number;
   app_stats: AppUsageStat[];
   recent_urls: UrlEntry[];
+  keyboard_count: number;
+  mouse_count: number;
 }
 
 interface TimeLogEntry {
@@ -112,6 +115,7 @@ const settings = ref<Settings>({
   theme: "system",
   auto_start_on_boot: false,
   screenshot_interval: 10,
+  is_screenshot_enabled: true,
   screenshot_location: "",
   backup_frequency: "never",
   backup_location: "",
@@ -126,6 +130,8 @@ const dashboardData = ref<DashboardData>({
   session_seconds: 0,
   app_stats: [],
   recent_urls: [],
+  keyboard_count: 0,
+  mouse_count: 0,
 });
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 let taskbarInterval: ReturnType<typeof setInterval> | null = null;
@@ -164,7 +170,7 @@ const createUserError = ref('');
 const createUserLoading = ref(false);
 
 // Admin drill-down state
-const adminTab = ref<'team' | 'screenshots' | 'timelogs' | 'activity'>('team');
+const adminTab = ref<'team' | 'screenshots' | 'timelogs' | 'activity' | 'urls' | 'categories'>('team');
 const selectedUser = ref<AuthUser | null>(null);
 const adminDrillDate = ref(new Date().toISOString().split('T')[0]);
 interface AdminScreenshot { id: string; user_id: string; display_name: string; file_path: string; captured_at: string; }
@@ -173,7 +179,15 @@ interface AdminActivity { id: string; event_type: string; timestamp: string; act
 const adminUserScreenshots = ref<AdminScreenshot[]>([]);
 const adminUserTimeLogs = ref<AdminTimeLog[]>([]);
 const adminUserActivity = ref<AdminActivity[]>([]);
+const adminUserUrls = ref<UrlEntryFull[]>([]);
 const adminDrillLoading = ref(false);
+
+const adminTimeLogsOffset = ref(0);
+const adminScreenshotsOffset = ref(0);
+const adminActivityOffset = ref(0);
+const adminUrlsOffset = ref(0);
+interface AppCategoryEntry { app_name: string; category: string; }
+const adminCategories = ref<AppCategoryEntry[]>([]);
 interface InputStats { keyboard_count: number; mouse_count: number; idle_start_count: number; }
 const adminInputStats = ref<InputStats>({ keyboard_count: 0, mouse_count: 0, idle_start_count: 0 });
 
@@ -182,6 +196,9 @@ const isMultiUser = computed(() => appConfig.value.mode === 'multi_user');
 
 // Settings mode change pending state
 const pendingMode = ref<'single_user' | 'multi_user'>('single_user');
+const fullscreenScreenshot = ref<string | null>(null);
+const openFullscreen = (path: string) => { fullscreenScreenshot.value = path; };
+const closeFullscreen = () => { fullscreenScreenshot.value = null; };
 
 // Accumulated paused seconds — updated each time we enter/leave pause state
 const pausedSeconds = ref(0);
@@ -194,10 +211,13 @@ const customToDate = ref(new Date().toISOString().split('T')[0]);
 const timeLogsList = ref<TimeLogEntry[]>([]);
 const urlsList = ref<UrlEntryFull[]>([]);
 const screenshotsList = ref<ScreenshotEntry[]>([]);
+const userActivityList = ref<AdminActivity[]>([]);
+const userInputStats = ref<InputStats>({ keyboard_count: 0, mouse_count: 0, idle_start_count: 0 });
 
 const timeLogsOffset = ref(0);
 const urlsOffset = ref(0);
 const screenshotsOffset = ref(0);
+const activityOffset = ref(0);
 const pageSize = 50;
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -317,7 +337,7 @@ const selectBackupLocation = async () => {
 };
 
 const exportData = async () => {
-  const selected = await save({ filters: [{ name: 'Database', extensions: ['db'] }], title: t('message.exportData') });
+  const selected = await save({ filters: [{ name: 'Backup Archive', extensions: ['zip'] }], title: t('message.exportData') });
   if (selected && typeof selected === 'string') {
     try {
       await invoke('cmd_export_db', { path: selected });
@@ -327,7 +347,7 @@ const exportData = async () => {
 };
 
 const importData = async () => {
-  const selected = await open({ directory: false, multiple: false, filters: [{ name: 'Database', extensions: ['db'] }], title: t('message.importData') });
+  const selected = await open({ directory: false, multiple: false, filters: [{ name: 'Backup Archive', extensions: ['zip'] }], title: t('message.importData') });
   if (selected && typeof selected === 'string') {
     try {
       await invoke('cmd_import_db', { path: selected });
@@ -428,6 +448,23 @@ const loadFilteredData = async (append = false) => {
       if (!append) screenshotsOffset.value = 0;
       const data = await invoke<ScreenshotEntry[]>('cmd_get_screenshots_range', { from, to, limit: pageSize, offset: screenshotsOffset.value });
       screenshotsList.value = append ? [...screenshotsList.value, ...data] : data;
+    } else if (currentView.value === 'activity') {
+      const { from, to } = getDateRange();
+      const userId = currentUser.value?.id || '';
+      if (!append) activityOffset.value = 0;
+      
+      const [acts, stats] = await Promise.all([
+        invoke<AdminActivity[]>('cmd_get_user_activity', { 
+          userId, 
+          from, 
+          to, 
+          limit: pageSize, 
+          offset: activityOffset.value 
+        }),
+        invoke<InputStats>('cmd_get_user_input_stats', { userId, from, to }),
+      ]);
+      userActivityList.value = append ? [...userActivityList.value, ...acts] : acts;
+      userInputStats.value = stats;
     }
   } catch (e) {
     console.error("Failed to load filtered data", e);
@@ -437,10 +474,11 @@ const loadFilteredData = async (append = false) => {
 const loadMoreTrackings = () => { timeLogsOffset.value += pageSize; loadFilteredData(true); };
 const loadMoreUrls = () => { urlsOffset.value += pageSize; loadFilteredData(true); };
 const loadMoreScreenshots = () => { screenshotsOffset.value += pageSize; loadFilteredData(true); };
+const loadMoreActivity = () => { activityOffset.value += pageSize; loadFilteredData(true); };
 
 // ─── Watchers ────────────────────────────────────────────────────
 watch([currentView, filterType, customFromDate, customToDate], () => {
-  if (['trackings', 'urls', 'screenshots'].includes(currentView.value)) {
+  if (['trackings', 'urls', 'screenshots', 'activity'].includes(currentView.value)) {
     loadFilteredData(false);
   }
 });
@@ -466,20 +504,20 @@ const initApp = async () => {
   await loadTrackingStatus();
   await refreshDashboard();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
-  refreshInterval = setInterval(refreshDashboard, 5000) as unknown as number;
+  refreshInterval = setInterval(refreshDashboard, 1000) as unknown as number;
   taskbarInterval = setInterval(() => {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const hours = Math.floor(activeSessionSeconds.value / 3600);
+    const mins = Math.floor((activeSessionSeconds.value % 3600) / 60);
+    const secs = activeSessionSeconds.value % 60;
+    const timeStr = `${hours}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     const status = trackingStatus.value;
     if (activeSession.value && status === 'running') {
-      const start = new Date(activeSession.value.start_time);
-      const totalElapsed = Math.floor((now.getTime() - start.getTime()) / 1000);
-      const netActive = Math.max(0, totalElapsed - pausedSeconds.value);
-      document.title = `▶ ${formatTime(netActive)} | ${timeStr} — Time Guardian`;
+      const prod = dashboardData.value.productivity_score;
+      document.title = `▶ ${timeStr} | ${prod}% Prod — Time Guardian`;
     } else if (status === 'paused') {
-      document.title = `⏸ Paused | ${timeStr} — Time Guardian`;
+      document.title = `⏸ Paused | Time Guardian`;
     } else {
-      document.title = `⏹ Stopped | ${timeStr} — Time Guardian`;
+      document.title = `⏹ Stopped | Time Guardian`;
     }
   }, 1000) as unknown as number;
   await listen<string>("tracking-status-changed", (event) => {
@@ -598,16 +636,18 @@ const wizardFinish = async () => {
 const loadAdminData = async () => {
   if (!isAdmin.value || !currentUser.value) return;
   try {
-    const [users, stats] = await Promise.all([
+    const [users, stats, categories] = await Promise.all([
       invoke<AuthUser[]>('cmd_get_company_users', { companyId: currentUser.value.company_id }),
       invoke<UserProductivityStat[]>('cmd_get_admin_stats', { companyId: currentUser.value.company_id }),
+      invoke<AppCategoryEntry[]>('cmd_get_all_app_categories'),
     ]);
     adminUsers.value = users;
     adminStats.value = stats;
+    adminCategories.value = categories;
   } catch (e) { console.error('Failed to load admin data', e); }
 };
 
-const loadUserDetail = async (user: AuthUser, tab: 'screenshots' | 'timelogs' | 'activity') => {
+const loadUserDetail = async (user: AuthUser, tab: 'screenshots' | 'timelogs' | 'activity' | 'urls', append = false) => {
   selectedUser.value = user;
   adminTab.value = tab;
   adminDrillLoading.value = true;
@@ -615,20 +655,34 @@ const loadUserDetail = async (user: AuthUser, tab: 'screenshots' | 'timelogs' | 
   const to = adminDrillDate.value;
   try {
     if (tab === 'screenshots') {
-      adminUserScreenshots.value = await invoke('cmd_get_user_screenshots', { userId: user.id, from, to, limit: 100, offset: 0 });
+      if (!append) adminScreenshotsOffset.value = 0;
+      const data = await invoke<AdminScreenshot[]>('cmd_get_user_screenshots', { userId: user.id, from, to, limit: pageSize, offset: adminScreenshotsOffset.value });
+      adminUserScreenshots.value = append ? [...adminUserScreenshots.value, ...data] : data;
     } else if (tab === 'timelogs') {
-      adminUserTimeLogs.value = await invoke('cmd_get_user_time_logs', { userId: user.id, from, to, limit: 200, offset: 0 });
+      if (!append) adminTimeLogsOffset.value = 0;
+      const data = await invoke<AdminTimeLog[]>('cmd_get_user_time_logs', { userId: user.id, from, to, limit: pageSize, offset: adminTimeLogsOffset.value });
+      adminUserTimeLogs.value = append ? [...adminUserTimeLogs.value, ...data] : data;
     } else if (tab === 'activity') {
+      if (!append) adminActivityOffset.value = 0;
       const [acts, stats] = await Promise.all([
-        invoke<AdminActivity[]>('cmd_get_user_activity', { userId: user.id, from, to, limit: 500, offset: 0 }),
+        invoke<AdminActivity[]>('cmd_get_user_activity', { userId: user.id, from, to, limit: pageSize, offset: adminActivityOffset.value }),
         invoke<InputStats>('cmd_get_user_input_stats', { userId: user.id, from, to }),
       ]);
-      adminUserActivity.value = acts;
+      adminUserActivity.value = append ? [...adminUserActivity.value, ...acts] : acts;
       adminInputStats.value = stats;
+    } else if (tab === 'urls') {
+      if (!append) adminUrlsOffset.value = 0;
+      const data = await invoke<UrlEntryFull[]>('cmd_get_user_urls', { userId: user.id, from, to, limit: pageSize, offset: adminUrlsOffset.value });
+      adminUserUrls.value = append ? [...adminUserUrls.value, ...data] : data;
     }
   } catch (e) { console.error('Failed to load user detail', e); }
   finally { adminDrillLoading.value = false; }
 };
+
+const loadMoreAdminScreenshots = () => { if (!selectedUser.value) return; adminScreenshotsOffset.value += pageSize; loadUserDetail(selectedUser.value, 'screenshots', true); };
+const loadMoreAdminLogs = () => { if (!selectedUser.value) return; adminTimeLogsOffset.value += pageSize; loadUserDetail(selectedUser.value, 'timelogs', true); };
+const loadMoreAdminActivity = () => { if (!selectedUser.value) return; adminActivityOffset.value += pageSize; loadUserDetail(selectedUser.value, 'activity', true); };
+const loadMoreAdminUrls = () => { if (!selectedUser.value) return; adminUrlsOffset.value += pageSize; loadUserDetail(selectedUser.value, 'urls', true); };
 
 const refreshAdminDrill = async () => {
   if (!selectedUser.value) return;
@@ -682,6 +736,7 @@ watch(appScreen, (s) => {
 
 watch(currentView, (v) => {
   if (v === 'admin') loadAdminData();
+  else if (['trackings', 'urls', 'screenshots', 'activity'].includes(v)) loadFilteredData();
 });
 
 const doResetApp = async () => {
@@ -703,7 +758,7 @@ const doResetApp = async () => {
     pendingMode.value = 'single_user';
     appScreen.value = 'wizard';
   } catch (e: any) {
-    alert('Reset failed: ' + (e?.toString() ?? 'unknown error'));
+    alert(t('message.resetFailed') + ': ' + (e?.toString() ?? t('message.unknownError')));
   }
 };
 
@@ -727,7 +782,7 @@ const doChangeMode = async () => {
   <!-- Loading -->
   <div v-if="appScreen === 'loading'" class="fullscreen-center">
     <div class="spinner"></div>
-    <p class="loading-text">Loading Time Guardian...</p>
+    <p class="loading-text">{{ t('message.loadingApp') }}</p>
   </div>
 
   <!-- First-Run Wizard -->
@@ -764,9 +819,9 @@ const doChangeMode = async () => {
           <label>{{ t('message.wizardCompanyName') }}</label>
           <input type="text" v-model="wizardCompanyName" :placeholder="t('message.wizardCompanyName')" />
           <label>{{ t('message.wizardAdminUsername') }}</label>
-          <input type="text" v-model="wizardAdminUsername" placeholder="admin" />
+          <input type="text" v-model="wizardAdminUsername" :placeholder="t('message.admin')" />
           <label>{{ t('message.wizardAdminDisplay') }}</label>
-          <input type="text" v-model="wizardAdminDisplay" placeholder="John Doe" />
+          <input type="text" v-model="wizardAdminDisplay" :placeholder="t('message.displayName')" />
           <label>{{ t('message.wizardAdminPassword') }}</label>
           <input type="password" v-model="wizardAdminPassword" :placeholder="t('message.wizardAdminPassword')" />
           <label>{{ t('message.wizardConfirmPassword') }}</label>
@@ -822,7 +877,7 @@ const doChangeMode = async () => {
     <aside class="sidebar">
       <div class="logo">
         <img src="/favicon.png" alt="Time Guardian" width="40" height="40" />
-        <h2>Time Guardian</h2>
+        <h2>{{ t('message.loginTitle') }}</h2>
       </div>
 
       <nav>
@@ -835,15 +890,18 @@ const doChangeMode = async () => {
         <button :class="{ active: currentView === 'urls' }" @click="currentView = 'urls'">
           🌐 {{ t('message.urls') }}
         </button>
+        <button :class="{ active: currentView === 'activity' }" @click="currentView = 'activity'">
+          ⌨️ {{ t('message.activity') }}
+        </button>
         <button :class="{ active: currentView === 'productivity' }" @click="currentView = 'productivity'">
-          📈 Productivity
+          📈 {{ t('message.productivity') }}
         </button>
         <button :class="{ active: currentView === 'screenshots' }" @click="currentView = 'screenshots'">
           📸 {{ t('message.screenshots') }}
         </button>
         <!-- Admin Dashboard — only visible to admins in multi-user mode -->
         <button v-if="isMultiUser && isAdmin" :class="{ active: currentView === 'admin' }" @click="currentView = 'admin'">
-          🛡️ Admin
+          🛡️ {{ t('message.adminDashboard') }}
         </button>
         <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
           ⚙️ {{ t('message.settings') }}
@@ -884,6 +942,9 @@ const doChangeMode = async () => {
         <div v-if="activeSession" class="session-active">
           <span class="pulse-dot"></span>
           <span>{{ t('message.sessionActive') }}</span>
+          <div v-if="trackingStatus === 'running' && dashboardData.app_stats.length > 0" class="current-activity-mini">
+             <small>{{ t('message.viewing') }} {{ dashboardData.app_stats[0].app_name }}</small>
+          </div>
           <button class="btn-stop" @click="stopSession">⏹ {{ t('message.stopSession') }}</button>
         </div>
         <div v-else class="session-inactive">
@@ -898,9 +959,9 @@ const doChangeMode = async () => {
         <span class="user-avatar">{{ currentUser.display_name.charAt(0).toUpperCase() }}</span>
         <div class="user-info">
           <span class="user-name">{{ currentUser.display_name }}</span>
-          <span :class="['role-badge', currentUser.role === 'admin' ? 'role-admin' : 'role-emp']">{{ currentUser.role }}</span>
+          <span :class="['role-badge', currentUser.role === 'admin' ? 'role-admin' : 'role-emp']">{{ currentUser.role === 'admin' ? t('message.adminRole') : t('message.employeeRole') }}</span>
         </div>
-        <button class="btn-logout" @click="doLogout" title="Sign out">
+        <button class="btn-logout" @click="doLogout" :title="t('message.signOut')">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
         </button>
       </div>
@@ -912,7 +973,7 @@ const doChangeMode = async () => {
         <header class="view-header">
           <h1>{{ t('message.todaySummary') }}</h1>
           <button class="btn-browse" @click="refreshDashboard" style="padding: 6px 12px; font-size:0.9rem;">
-            🔄 Refresh
+            🔄 {{ t('message.refresh') }}
           </button>
         </header>
 
@@ -926,38 +987,58 @@ const doChangeMode = async () => {
             <p class="big-stat idle">{{ formatTime(dashboardData.total_idle_seconds) }}</p>
           </div>
           <div class="card premium-card">
-            <h3>{{ t('message.sessionTime') }}</h3>
-            <p class="big-stat session">{{ formatTime(dashboardData.session_seconds) }}</p>
-          </div>
-          <div class="card premium-card">
             <h3>{{ t('message.totalTime') }}</h3>
             <p class="big-stat total">{{ formatTime(dashboardData.total_active_seconds + dashboardData.total_idle_seconds) }}</p>
+          </div>
+          <div class="card premium-card" style="border-left: 3px solid var(--accent);">
+            <h3>⌨️ {{ t('message.keyboard') }}</h3>
+            <p class="big-stat" style="color:var(--accent);">{{ dashboardData.keyboard_count.toLocaleString() }}</p>
+          </div>
+          <div class="card premium-card" style="border-left: 3px solid var(--success);">
+            <h3>🖱 {{ t('message.mouse') }}</h3>
+            <p class="big-stat" style="color:var(--success);">{{ dashboardData.mouse_count.toLocaleString() }}</p>
           </div>
         </div>
 
         <!-- App Usage Table -->
         <div class="section-block">
           <h2>{{ t('message.topApps') }}</h2>
-          <div v-if="dashboardData.app_stats.length > 0" class="app-table">
+          <div v-if="dashboardData.app_stats.length > 0" class="app-table" :class="{ 'with-category': !isMultiUser || isAdmin }">
             <div class="app-row header-row">
-              <span>{{ t('message.appName') }}</span>
-              <span>{{ t('message.timeSpent') }}</span>
-              <span>{{ t('message.switches') }}</span>
-              <span>%</span>
+              <span class="col-app">{{ t('message.appName') }} & %</span>
+              <span class="col-time">{{ t('message.timeSpent') }}</span>
+              <span class="col-switches">{{ t('message.switches') }}</span>
+              <span v-if="!isMultiUser || isAdmin" class="col-category">{{ t('message.category') }}</span>
             </div>
             <div v-for="app in dashboardData.app_stats" :key="app.app_name" class="app-row">
-              <span class="app-name">
-                <span class="app-icon">{{ appIcon(app.app_name) }}</span>
-                {{ app.app_name }}
-              </span>
-              <span class="app-time">{{ formatTime(app.total_seconds) }}</span>
-              <span class="app-switches">{{ app.session_count }}</span>
-              <span class="app-percent">
-                <div class="bar-bg">
-                  <div class="bar-fill" :style="{ width: percentage(app.total_seconds) + '%' }"></div>
+              <div class="col-app-info">
+                <div class="app-main-info">
+                  <span class="app-name">
+                    <span class="app-icon">{{ appIcon(app.app_name) }}</span>
+                    {{ app.app_name }}
+                  </span>
                 </div>
-                {{ percentage(app.total_seconds) }}%
-              </span>
+                <div class="app-progress-container">
+                  <div class="bar-bg">
+                    <div class="bar-fill" :style="{ width: percentage(app.total_seconds) + '%' }"></div>
+                  </div>
+                  <span class="app-percent-text">{{ percentage(app.total_seconds) }}%</span>
+                </div>
+              </div>
+              <span class="col-time-val">{{ formatTime(app.total_seconds) }}</span>
+              <span class="col-switches-val">{{ app.session_count }}</span>
+              <div v-if="!isMultiUser || isAdmin" class="col-category-val">
+                <select 
+                  v-model="app.category" 
+                  @change="updateCategory(app.app_name, app.category)"
+                  :class="['badge-select', app.category]"
+                  :disabled="isMultiUser && !isAdmin"
+                >
+                  <option value="productive">{{ t('message.productive') }}</option>
+                  <option value="neutral">{{ t('message.neutral') }}</option>
+                  <option value="unproductive">{{ t('message.unproductive') }}</option>
+                </select>
+              </div>
             </div>
           </div>
           <div v-else class="empty-state">
@@ -969,9 +1050,9 @@ const doChangeMode = async () => {
         <div class="section-block">
           <h2>🌐 {{ t('message.recentUrls') }}</h2>
           <div v-if="dashboardData.recent_urls.length > 0" class="url-list">
-            <div v-for="(entry, i) in dashboardData.recent_urls" :key="i" class="url-row">
+            <div v-for="entry in dashboardData.recent_urls" :key="entry.timestamp" class="url-row">
               <span class="url-time">{{ formatTimestamp(entry.timestamp) }}</span>
-              <span class="url-text">{{ entry.url }}</span>
+              <span class="url-text" :title="entry.url">{{ entry.url }}</span>
             </div>
           </div>
           <div v-else class="empty-state">
@@ -986,7 +1067,7 @@ const doChangeMode = async () => {
           <h1>{{ t('message.trackings') }}</h1>
           <div class="filter-controls">
             <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">
-              🔄 Refresh
+              🔄 {{ t('message.refresh') }}
             </button>
             <select v-model="filterType">
               <option value="daily">{{ t('message.filterDaily') }}</option>
@@ -1006,9 +1087,9 @@ const doChangeMode = async () => {
         <div class="app-table">
           <div class="app-row header-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
             <span>{{ t('message.appName') }}</span>
-            <span>Title</span>
-            <span>Start</span>
-            <span>End</span>
+            <span>{{ t('message.title') }}</span>
+            <span>{{ t('message.start') }}</span>
+            <span>{{ t('message.end') }}</span>
             <span>{{ t('message.timeSpent') }}</span>
           </div>
           <div v-for="log in timeLogsList" :key="log.id" class="app-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
@@ -1025,7 +1106,7 @@ const doChangeMode = async () => {
             <p>{{ t('message.noData') }}</p>
           </div>
           <div v-else-if="timeLogsList.length % pageSize === 0" class="load-more-container">
-            <button class="btn-start" @click="loadMoreTrackings">Load More</button>
+            <button class="btn-start" @click="loadMoreTrackings">{{ t('message.loadMore') }}</button>
           </div>
         </div>
       </div>
@@ -1036,7 +1117,7 @@ const doChangeMode = async () => {
           <h1>{{ t('message.urls') }}</h1>
           <div class="filter-controls">
             <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">
-              🔄 Refresh
+              🔄 {{ t('message.refresh') }}
             </button>
             <select v-model="filterType">
               <option value="daily">{{ t('message.filterDaily') }}</option>
@@ -1056,13 +1137,78 @@ const doChangeMode = async () => {
         <div class="url-list">
           <div v-for="entry in urlsList" :key="entry.id" class="url-row">
             <span class="url-time">{{ formatTimestamp(entry.timestamp) }}</span>
-            <span class="url-text">{{ entry.url }}</span>
+            <span class="url-text" :title="entry.url">{{ entry.url }}</span>
           </div>
           <div v-if="urlsList.length === 0" class="empty-state">
             <p>{{ t('message.noUrls') }}</p>
           </div>
           <div v-else-if="urlsList.length % pageSize === 0" class="load-more-container">
-            <button class="btn-start" @click="loadMoreUrls">Load More</button>
+            <button class="btn-start" @click="loadMoreUrls">{{ t('message.loadMore') }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ACTIVITY VIEW -->
+      <div v-if="currentView === 'activity'" class="view-activity">
+        <header class="view-header">
+          <h1>{{ t('message.detailedActivity') }}</h1>
+          <div class="filter-controls">
+            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">🔄 {{ t('message.refresh') }}</button>
+            <select v-model="filterType">
+              <option value="daily">{{ t('message.filterDaily') }}</option>
+              <option value="weekly">{{ t('message.filterWeekly') }}</option>
+              <option value="monthly">{{ t('message.filterMonthly') }}</option>
+              <option value="custom">{{ t('message.filterCustom') }}</option>
+            </select>
+          </div>
+        </header>
+
+        <div class="stats-grid activity-stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px;">
+          <div class="card premium-card small-stat-card" style="border-left: 3px solid var(--accent); padding: 12px 16px;">
+            <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em; margin-bottom: 6px;">⌨️ {{ t('message.keyboard') }}</h3>
+            <p style="font-size:1.5rem; font-weight:800; color:var(--accent); margin:2px 0;">{{ userInputStats.keyboard_count.toLocaleString() }}</p>
+            <small style="color:var(--text-muted); font-size: 0.65rem;">{{ t('message.keysPressed') }}</small>
+          </div>
+          <div class="card premium-card small-stat-card" style="border-left: 3px solid var(--success); padding: 12px 16px;">
+            <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em; margin-bottom: 6px;">🖱 {{ t('message.mouse') }}</h3>
+            <p style="font-size:1.5rem; font-weight:800; color:var(--success); margin:2px 0;">{{ userInputStats.mouse_count.toLocaleString() }}</p>
+            <small style="color:var(--text-muted); font-size: 0.65rem;">{{ t('message.movementsDetected') }}</small>
+          </div>
+          <div class="card premium-card small-stat-card" style="border-left: 3px solid var(--warning); padding: 12px 16px;">
+            <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em; margin-bottom: 6px;">😴 {{ t('message.idlePeriods') }}</h3>
+            <p style="font-size:1.5rem; font-weight:800; color:var(--warning); margin:2px 0;">{{ userInputStats.idle_start_count }}</p>
+            <small style="color:var(--text-muted); font-size: 0.65rem;">{{ t('message.idleStartsLogged') }}</small>
+          </div>
+        </div>
+
+        <div class="app-table">
+          <div class="app-row header-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+            <span>{{ t('message.type') }}</span><span>{{ t('message.time') }}</span><span>{{ t('message.input') }}</span><span>{{ t('message.status') }}</span>
+          </div>
+          <div v-for="act in userActivityList" :key="act.id" class="app-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+            <span class="app-name" style="display:flex; align-items:center; gap:6px;">
+              <span v-if="act.event_type === 'keyboard'">⌨️</span>
+              <span v-else-if="act.event_type === 'mouse'">🖱</span>
+              <span v-else-if="act.event_type === 'idle_start'">😴</span>
+              <span v-else-if="act.event_type === 'idle_end'">▶️</span>
+              <span v-else-if="act.event_type.startsWith('url:')">🌐</span>
+              <span v-else>📌</span>
+              {{ act.event_type.startsWith('url:') ? act.event_type.replace('url:', '') : act.event_type }}
+            </span>
+            <span class="url-time">{{ formatTimestamp(act.timestamp) }}</span>
+            <span style="font-size:0.8rem; font-weight:600;"
+              :style="{ color: act.event_type==='keyboard' ? 'var(--accent)' : act.event_type==='mouse' ? 'var(--success)' : 'var(--text-muted)' }">
+              {{ act.event_type === 'keyboard' ? 'KB' : act.event_type === 'mouse' ? t('message.mouse') : '—' }}
+            </span>
+            <span :style="{ color: act.activity_status === 'idle' ? 'var(--warning)' : 'var(--success)', fontWeight: '600', fontSize: '0.8rem' }">
+              {{ act.activity_status }}
+            </span>
+          </div>
+          <div v-if="userActivityList.length === 0" class="empty-state">
+            <p>{{ t('message.noActivity') }}</p>
+          </div>
+          <div v-else-if="userActivityList.length % pageSize === 0" class="load-more-container" style="margin-top: 16px;">
+            <button class="btn-start" @click="loadMoreActivity">{{ t('message.loadMore') }}</button>
           </div>
         </div>
       </div>
@@ -1073,7 +1219,7 @@ const doChangeMode = async () => {
           <h1>{{ t('message.screenshots') }}</h1>
           <div class="filter-controls">
             <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">
-              🔄 Refresh
+              🔄 {{ t('message.refresh') }}
             </button>
             <select v-model="filterType">
               <option value="daily">{{ t('message.filterDaily') }}</option>
@@ -1091,7 +1237,7 @@ const doChangeMode = async () => {
         </header>
 
         <div class="screenshots-grid">
-          <div v-for="shot in screenshotsList" :key="shot.id" class="screenshot-card">
+          <div v-for="shot in screenshotsList" :key="shot.id" class="screenshot-card" @click="openFullscreen(shot.file_path)" style="cursor: pointer;">
             <img :src="convertFileSrc(shot.file_path)" alt="Screenshot" loading="lazy" />
             <div class="screenshot-info">
               <span>{{ formatTimestamp(shot.captured_at) }}</span>
@@ -1101,7 +1247,7 @@ const doChangeMode = async () => {
             <p>{{ t('message.noData') }}</p>
           </div>
           <div v-else-if="screenshotsList.length % pageSize === 0" class="load-more-container" style="grid-column: 1 / -1;">
-            <button class="btn-start" @click="loadMoreScreenshots">Load More</button>
+            <button class="btn-start" @click="loadMoreScreenshots">{{ t('message.loadMore') }}</button>
           </div>
         </div>
       </div>
@@ -1109,24 +1255,45 @@ const doChangeMode = async () => {
       <!-- PRODUCTIVITY VIEW -->
       <div v-if="currentView === 'productivity'" class="view-productivity">
         <header>
-          <h1>Productivity</h1>
+          <h1>{{ t('message.productivity') }}</h1>
         </header>
+
+        <div class="activity-summary-row" style="display: flex; gap: 24px; padding: 0 16px 24px 16px;">
+          <div class="card activity-stat-card" style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px;">
+            <div class="stat-icon" style="background: var(--accent-light); color: var(--accent); width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;">
+              ⌨️
+            </div>
+            <div>
+              <div style="font-size: 0.9rem; color: var(--text-muted);">{{ t('message.keyboardActivity') }}</div>
+              <div style="font-size: 1.5rem; font-weight: 700;">{{ dashboardData.keyboard_count }} <span style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted);">{{ t('message.events') }}</span></div>
+            </div>
+          </div>
+          <div class="card activity-stat-card" style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px;">
+            <div class="stat-icon" style="background: var(--success-light); color: var(--success); width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;">
+              🖱️
+            </div>
+            <div>
+              <div style="font-size: 0.9rem; color: var(--text-muted);">{{ t('message.mouseActivity') }}</div>
+              <div style="font-size: 1.5rem; font-weight: 700;">{{ dashboardData.mouse_count }} <span style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted);">{{ t('message.events') }}</span></div>
+            </div>
+          </div>
+        </div>
 
         <div class="productivity-grid" style="display: grid; grid-template-columns: 1fr 2fr; gap: 24px; padding: 16px;">
           <div class="card chart-container" style="height: 300px;">
-            <h3>Productivity Breakdown (Today)</h3>
+            <h3>{{ t('message.productivityBreakdown') }}</h3>
             <Pie :data="productivityChartData" :options="productivityChartOptions" />
           </div>
 
           <div class="card">
-            <h3>App Categories</h3>
+            <h3>{{ t('message.appCategories') }}</h3>
             <div class="table-responsive">
               <table>
                 <thead>
                   <tr>
-                    <th>Application</th>
-                    <th>Time Spent</th>
-                    <th>Category</th>
+                    <th>{{ t('message.appName') }}</th>
+                    <th>{{ t('message.timeSpent') }}</th>
+                    <th>{{ t('message.category') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1134,10 +1301,15 @@ const doChangeMode = async () => {
                     <td>{{ stat.app_name }}</td>
                     <td>{{ formatTime(stat.total_seconds) }}</td>
                     <td>
-                      <select v-model="stat.category" @change="updateCategory(stat.app_name, stat.category)">
-                        <option value="productive">Productive</option>
-                        <option value="neutral">Neutral</option>
-                        <option value="unproductive">Unproductive</option>
+                      <select 
+                        v-model="stat.category" 
+                        @change="updateCategory(stat.app_name, stat.category)" 
+                        :disabled="isMultiUser && !isAdmin"
+                        :class="['category-badge-select', stat.category]"
+                      >
+                        <option value="productive">{{ t('message.productive') }}</option>
+                        <option value="neutral">{{ t('message.neutral') }}</option>
+                        <option value="unproductive">{{ t('message.unproductive') }}</option>
                       </select>
                     </td>
                   </tr>
@@ -1149,126 +1321,228 @@ const doChangeMode = async () => {
       </div>
 
       <!-- SETTINGS VIEW -->
-      <!-- SETTINGS VIEW -->
       <div v-if="currentView === 'settings'" class="view-settings">
         <header>
           <h1>{{ t('message.settings') }}</h1>
         </header>
-        <div class="settings-grid">
-          <div class="card setting-card">
-            <label>{{ t('message.language') }}</label>
-            <select v-model="settings.language">
-              <option value="en">English</option>
-              <option value="bn">বাংলা</option>
-            </select>
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.theme') }}</label>
-            <select v-model="settings.theme">
-              <option value="light">{{ t('message.light') }}</option>
-              <option value="dark">{{ t('message.dark') }}</option>
-              <option value="system">{{ t('message.system') }}</option>
-            </select>
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.autoStart') }}</label>
-            <input type="checkbox" v-model="settings.auto_start_on_boot" />
-          </div>
-          <div class="card setting-card">
-            <label>Screenshot Interval (minutes)</label>
-            <input type="number" v-model="settings.screenshot_interval" min="1" />
-          </div>
-          <div class="card setting-card">
-            <label>Idle Timeout (minutes)</label>
-            <small style="display:block; color: var(--text-muted); margin-bottom:6px;">Mark as idle if no keyboard/mouse activity for this duration</small>
-            <input type="number" v-model="settings.idle_threshold" min="1" max="60" />
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.screenshotLocation') }}</label>
-            <div class="input-with-button">
-              <input type="text" v-model="settings.screenshot_location" :placeholder="defaultScreenshotDir" />
-              <button class="btn-browse" @click="selectScreenshotLocation">📁</button>
-            </div>
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.backupFrequency') }}</label>
-            <select v-model="settings.backup_frequency">
-              <option value="never">{{ t('message.never') }}</option>
-              <option value="daily">{{ t('message.daily') }}</option>
-              <option value="weekly">{{ t('message.weekly') }}</option>
-            </select>
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.backupLocation') }}</label>
-            <div class="input-with-button">
-              <input type="text" v-model="settings.backup_location" placeholder="/backup/path" />
-              <button class="btn-browse" @click="selectBackupLocation">📁</button>
-            </div>
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.exportData') }}</label>
-            <button class="btn-browse" style="width:100%; padding: 8px; margin-top: 8px;" @click="exportData">{{ t('message.exportData') }}</button>
-          </div>
-          <div class="card setting-card">
-            <label>{{ t('message.importData') }}</label>
-            <button class="btn-browse" style="width:100%; padding: 8px; margin-top: 8px;" @click="importData">{{ t('message.importData') }}</button>
-          </div>
 
-          <!-- App Mode -->
-          <div class="card setting-card setting-card-wide">
-            <label>{{ t('message.appMode') }}</label>
-            <div class="mode-toggle-row">
-              <span class="mode-current-badge" :class="appConfig?.mode === 'multi_user' ? 'mode-badge-multi' : 'mode-badge-single'">
-                {{ appConfig?.mode === 'multi_user' ? t('message.modeMultiUser') : t('message.modeSingleUser') }}
-              </span>
-              <select v-model="pendingMode" class="mode-select">
-                <option value="single_user">{{ t('message.modeSingleUser') }}</option>
-                <option value="multi_user">{{ t('message.modeMultiUser') }}</option>
-              </select>
-              <button class="btn-change-mode" @click="doChangeMode" :disabled="pendingMode === appConfig?.mode">{{ t('message.changeMode') }}</button>
+        <div class="settings-content">
+          <!-- 1. General Settings -->
+          <section class="settings-section">
+            <h2 class="section-title">⚙️ {{ t('message.general') }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card">
+                <label>{{ t('message.language') }}</label>
+                <select v-model="settings.language">
+                  <option value="en">English</option>
+                  <option value="bn">বাংলা</option>
+                </select>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t('message.theme') }}</label>
+                <select v-model="settings.theme">
+                  <option value="light">{{ t('message.light') }}</option>
+                  <option value="dark">{{ t('message.dark') }}</option>
+                  <option value="system">{{ t('message.system') }}</option>
+                </select>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t('message.autoStart') }}</label>
+                <div class="checkbox-row">
+                  <input type="checkbox" v-model="settings.auto_start_on_boot" />
+                  <span>{{ settings.auto_start_on_boot ? t('message.enabled') : t('message.disabled') }}</span>
+                </div>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <!-- Danger Zone -->
-          <div class="card setting-card setting-card-wide danger-card">
-            <label class="danger-label">⚠️ {{ t('message.dangerZone') }}</label>
-            <p class="danger-desc">{{ t('message.resetAppConfirm') }}</p>
-            <button class="btn-danger" @click="doResetApp">{{ t('message.resetApp') }}</button>
-          </div>
+          <!-- 2. Monitoring & Tracking -->
+          <section class="settings-section">
+            <h2 class="section-title">
+              🔍 {{ t('message.monitoring') }}
+              <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="admin-lock-hint">🔒 {{ t('message.controlledByAdmin') }}</span>
+            </h2>
+            <div class="settings-grid">
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>
+                  {{ t('message.screenshotInterval') }}
+                  <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span>
+                </label>
+                <input type="number" v-model="settings.screenshot_interval" min="1" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+              </div>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>
+                  {{ t('message.idleTimeout') }}
+                  <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span>
+                </label>
+                <small class="setting-desc">{{ t('message.idleThresholdDesc') }}</small>
+                <input type="number" v-model="settings.idle_threshold" min="1" max="60" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+              </div>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>
+                  {{ t('message.screenshotStatus') }}
+                  <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span>
+                </label>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="settings.is_screenshot_enabled" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+                  <span :style="{ color: settings.is_screenshot_enabled ? 'var(--success)' : 'var(--danger)' }">
+                    {{ settings.is_screenshot_enabled ? t('message.active') : t('message.disabled') }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 3. Storage & Backup -->
+          <section class="settings-section">
+            <h2 class="section-title">📁 {{ t('message.storage') }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>
+                  {{ t('message.screenshotLocation') }}
+                  <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span>
+                </label>
+                <div class="input-with-button">
+                  <input type="text" v-model="settings.screenshot_location" :placeholder="defaultScreenshotDir" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+                  <button class="btn-browse" @click="selectScreenshotLocation" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'">📁</button>
+                </div>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t('message.backupFrequency') }}</label>
+                <select v-model="settings.backup_frequency">
+                  <option value="never">{{ t('message.never') }}</option>
+                  <option value="daily">{{ t('message.daily') }}</option>
+                  <option value="weekly">{{ t('message.weekly') }}</option>
+                </select>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t('message.backupLocation') }}</label>
+                <div class="input-with-button">
+                  <input type="text" v-model="settings.backup_location" :placeholder="t('message.backupPathPlaceholder')" />
+                  <button class="btn-browse" @click="selectBackupLocation">📁</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 4. Data Management -->
+          <section class="settings-section">
+            <h2 class="section-title">💾 {{ t('message.data') }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card">
+                <label>{{ t('message.exportData') }}</label>
+                <p class="setting-desc">{{ t('message.exportDesc') }}</p>
+                <button class="btn-action-outline" @click="exportData">📤 {{ t('message.exportData') }}</button>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t('message.importData') }}</label>
+                <p class="setting-desc">{{ t('message.importDesc') }}</p>
+                <button class="btn-action-outline" @click="importData">📥 {{ t('message.importData') }}</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 5. System Mode -->
+          <section class="settings-section">
+            <h2 class="section-title">🚀 {{ t('message.systemModeHeader') }}</h2>
+            <div class="card setting-card-wide">
+              <div class="system-mode-container">
+                <div class="mode-info">
+                  <label>{{ t('message.appMode') }}</label>
+                  <p class="setting-desc">{{ t('message.currentMode') }}: <strong>{{ appConfig?.mode === 'multi_user' ? t('message.modeMultiUser') : t('message.modeSingleUser') }}</strong></p>
+                </div>
+                <div class="mode-actions">
+                  <select v-model="pendingMode" class="mode-select">
+                    <option value="single_user">{{ t('message.modeSingleUser') }}</option>
+                    <option value="multi_user">{{ t('message.modeMultiUser') }}</option>
+                  </select>
+                  <button class="btn-change-mode" @click="doChangeMode" :disabled="pendingMode === appConfig?.mode">
+                    {{ t('message.changeMode') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 6. Danger Zone -->
+          <section class="settings-section">
+            <div class="card setting-card-wide danger-card">
+              <div class="danger-header">
+                <h2 class="danger-label">⚠️ {{ t('message.dangerZone') }}</h2>
+                <p class="danger-desc">{{ t('message.resetAppDesc') }}</p>
+              </div>
+              <button class="btn-danger" @click="doResetApp">{{ t('message.resetApp') }}</button>
+            </div>
+          </section>
         </div>
       </div>
 
       <!-- ADMIN DASHBOARD VIEW -->
       <div v-if="currentView === 'admin'" class="view-admin">
         <header class="view-header">
-          <h1>🛡️ Admin Dashboard</h1>
+          <h1>🛡️ {{ t('message.adminDashboard') }}</h1>
           <div style="display:flex; gap:8px; align-items:center;">
             <input type="date" v-model="adminDrillDate" @change="refreshAdminDrill" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--card-bg); color:var(--text-color); font-size:0.9rem;" />
-            <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size:0.9rem;">🔄 Refresh</button>
+            <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size:0.9rem;">🔄 {{ t('message.refresh') }}</button>
           </div>
         </header>
 
         <!-- Admin Tabs -->
         <div class="admin-tabs">
-          <button :class="['admin-tab', { 'admin-tab-active': adminTab === 'team' }]" @click="adminTab = 'team'; selectedUser = null">👥 Team</button>
-          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'screenshots' }]" @click="loadUserDetail(selectedUser, 'screenshots')">📸 Screenshots</button>
-          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'timelogs' }]" @click="loadUserDetail(selectedUser, 'timelogs')">⏱ Time Logs</button>
-          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'activity' }]" @click="loadUserDetail(selectedUser, 'activity')">⌨️ Activity</button>
-          <span v-if="selectedUser" style="margin-left:8px; font-size:0.85rem; color:var(--text-muted); align-self:center;">Viewing: <strong>{{ selectedUser.display_name }}</strong></span>
+          <button :class="['admin-tab', { 'admin-tab-active': adminTab === 'team' }]" @click="adminTab = 'team'; selectedUser = null">👥 {{ t('message.team') }}</button>
+          <button :class="['admin-tab', { 'admin-tab-active': adminTab === 'categories' }]" @click="adminTab = 'categories'; selectedUser = null">🏷️ {{ t('message.categories') }}</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'screenshots' }]" @click="loadUserDetail(selectedUser, 'screenshots')">📸 {{ t('message.screenshots') }}</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'timelogs' }]" @click="loadUserDetail(selectedUser, 'timelogs')">⏱ {{ t('message.trackings') }}</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'activity' }]" @click="loadUserDetail(selectedUser, 'activity')">⌨️ {{ t('message.activity') }}</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'urls' }]" @click="loadUserDetail(selectedUser, 'urls')">🌐 {{ t('message.urls') }}</button>
+          <span v-if="selectedUser" style="margin-left:8px; font-size:0.85rem; color:var(--text-muted); align-self:center;">{{ t('message.viewing') }} <strong>{{ selectedUser.display_name }}</strong></span>
+        </div>
+
+        <!-- CATEGORIES TAB -->
+        <div v-if="adminTab === 'categories'">
+          <div class="section-block">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+              <h2>{{ t('message.manageAppCategories') }}</h2>
+              <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size:0.85rem;">🔄 {{ t('message.reloadList') }}</button>
+            </div>
+            <div class="app-table categories-manage-table">
+              <div class="app-row header-row" style="grid-template-columns: 1fr 180px;">
+                <span>{{ t('message.applicationName') }}</span><span>{{ t('message.category') }}</span>
+              </div>
+              <div v-for="cat in adminCategories" :key="cat.app_name" class="app-row" style="grid-template-columns: 1fr 180px;">
+                <span class="app-name-cell">
+                   <span class="app-icon">{{ appIcon(cat.app_name) }}</span>
+                   {{ cat.app_name }}
+                </span>
+                <select v-model="cat.category" @change="updateCategory(cat.app_name, cat.category)" class="badge-select" :class="cat.category">
+                  <option value="productive">✅ {{ t('message.productive') }}</option>
+                  <option value="neutral">⚪ {{ t('message.neutral') }}</option>
+                  <option value="unproductive">❌ {{ t('message.unproductive') }}</option>
+                </select>
+              </div>
+              <div v-if="adminCategories.length === 0" class="empty-state">
+                <p>{{ t('message.noTrackedApps') }}</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- TEAM TAB -->
         <div v-if="adminTab === 'team'">
           <!-- Productivity Stats -->
           <div class="section-block">
-            <h2>Today's Team Productivity</h2>
+            <h2>{{ t('message.todaysTeamProductivity') }}</h2>
             <div class="app-table">
-              <div class="app-row header-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr;">
-                <span>Employee</span><span>Active Time</span><span>Sessions</span><span>Username</span><span>Actions</span>
+              <div class="app-row header-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1.5fr;">
+                <span>{{ t('message.employee') }}</span><span>{{ t('message.activeTime') }}</span><span>{{ t('message.kbMouse') }}</span><span>{{ t('message.sessions') }}</span><span>{{ t('message.username') }}</span><span>{{ t('message.actions') }}</span>
               </div>
-              <div v-for="stat in adminStats" :key="stat.user_id" class="app-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr;">
+              <div v-for="stat in adminStats" :key="stat.user_id" class="app-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1.5fr;">
                 <span class="app-name">👤 {{ stat.display_name }}</span>
                 <span class="app-time">{{ formatTime(stat.total_active_seconds) }}</span>
+                <span class="app-activity" style="font-size:0.8rem;">
+                  <span :title="t('message.keyboardEvents')">⌨️ {{ stat.keyboard_count }}</span> / 
+                  <span :title="t('message.mouseEvents')">🖱️ {{ stat.mouse_count }}</span>
+                </span>
                 <span class="app-switches">{{ stat.session_count }}</span>
                 <span class="app-time" style="font-size:0.85rem; color: var(--text-muted);">{{ stat.username }}</span>
                 <span style="display:flex; gap:4px;">
@@ -1277,38 +1551,38 @@ const doChangeMode = async () => {
                   <button class="btn-drill" @click="loadUserDetail(adminUsers.find(u => u.id === stat.user_id)!, 'activity')">⌨️</button>
                 </span>
               </div>
-              <div v-if="adminStats.length === 0" class="empty-state"><p>No data today</p></div>
+              <div v-if="adminStats.length === 0" class="empty-state"><p>{{ t('message.noDataToday') }}</p></div>
             </div>
           </div>
 
           <!-- User Management -->
           <div class="section-block">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-              <h2>Team Members</h2>
-              <button class="btn-browse" @click="showCreateUser = !showCreateUser" style="padding: 8px 16px; font-size:0.9rem;">+ Add User</button>
+              <h2>{{ t('message.teamMembers') }}</h2>
+              <button class="btn-browse" @click="showCreateUser = !showCreateUser" style="padding: 8px 16px; font-size:0.9rem;">+ {{ t('message.addUser') }}</button>
             </div>
 
             <!-- Create User Form -->
             <div v-if="showCreateUser" class="card" style="margin-bottom: 20px; padding: 24px;">
-              <h3 style="margin-bottom:16px;">New Team Member</h3>
+              <h3 style="margin-bottom:16px;">{{ t('message.newTeamMember') }}</h3>
               <div class="wizard-form">
-                <label>Username</label>
+                <label>{{ t('message.username') }}</label>
                 <input type="text" v-model="newUser.username" placeholder="jane_doe" />
-                <label>Display Name</label>
+                <label>{{ t('message.displayName') }}</label>
                 <input type="text" v-model="newUser.display_name" placeholder="Jane Doe" />
-                <label>Password</label>
-                <input type="password" v-model="newUser.password" placeholder="Temporary password" />
-                <label>Role</label>
+                <label>{{ t('message.loginPassword') }}</label>
+                <input type="password" v-model="newUser.password" :placeholder="t('message.temporaryPassword')" />
+                <label>{{ t('message.role') }}</label>
                 <select v-model="newUser.role">
-                  <option value="employee">Employee</option>
-                  <option value="admin">Admin</option>
+                  <option value="employee">{{ t('message.employeeRole') }}</option>
+                  <option value="admin">{{ t('message.adminRole') }}</option>
                 </select>
               </div>
               <div v-if="createUserError" class="wizard-error" style="margin-top:12px;">{{ createUserError }}</div>
               <div style="display:flex; gap:12px; margin-top:16px;">
-                <button class="btn-stop" style="flex:1;" @click="showCreateUser = false">Cancel</button>
+                <button class="btn-stop" style="flex:1;" @click="showCreateUser = false">{{ t('message.cancel') }}</button>
                 <button class="btn-start" style="flex:2;" :disabled="createUserLoading" @click="doCreateUser">
-                  {{ createUserLoading ? 'Creating...' : 'Create User' }}
+                  {{ createUserLoading ? t('message.creating') : t('message.createUser') }}
                 </button>
               </div>
             </div>
@@ -1316,7 +1590,7 @@ const doChangeMode = async () => {
             <!-- Users Table -->
             <div class="app-table">
               <div class="app-row header-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
-                <span>Name</span><span>Username</span><span>Role</span>
+                <span>{{ t('message.name') }}</span><span>{{ t('message.username') }}</span><span>{{ t('message.role') }}</span>
               </div>
               <div v-for="user in adminUsers" :key="user.id" class="app-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
                 <span class="app-name">{{ user.display_name }}</span>
@@ -1325,7 +1599,7 @@ const doChangeMode = async () => {
                   <span :class="['role-badge', user.role === 'admin' ? 'role-admin' : 'role-emp']">{{ user.role }}</span>
                 </span>
               </div>
-              <div v-if="adminUsers.length === 0" class="empty-state"><p>No team members yet</p></div>
+              <div v-if="adminUsers.length === 0" class="empty-state"><p>{{ t('message.noTeamMembers') }}</p></div>
             </div>
           </div>
         </div>
@@ -1333,16 +1607,19 @@ const doChangeMode = async () => {
         <!-- SCREENSHOTS TAB -->
         <div v-if="adminTab === 'screenshots' && selectedUser">
           <div class="section-block">
-            <h2>📸 Screenshots — {{ selectedUser.display_name }}</h2>
-            <div v-if="adminDrillLoading" class="empty-state"><p>Loading...</p></div>
+            <h2>📸 {{ t('message.screenshots') }} — {{ selectedUser.display_name }}</h2>
+            <div v-if="adminDrillLoading" class="empty-state"><p>{{ t('message.loading') }}</p></div>
             <div v-else class="screenshots-grid">
-              <div v-for="shot in adminUserScreenshots" :key="shot.id" class="screenshot-card">
+              <div v-for="shot in adminUserScreenshots" :key="shot.id" class="screenshot-card" @click="openFullscreen(shot.file_path)" style="cursor: pointer;">
                 <img :src="convertFileSrc(shot.file_path)" alt="Screenshot" loading="lazy" />
                 <div class="screenshot-info">
                   <span>{{ formatTimestamp(shot.captured_at) }}</span>
                 </div>
               </div>
-              <div v-if="adminUserScreenshots.length === 0" class="empty-state" style="grid-column:1/-1;"><p>No screenshots for this date</p></div>
+              <div v-if="adminUserScreenshots.length === 0" class="empty-state" style="grid-column:1/-1;"><p>{{ t('message.noScreenshotsForDate') }}</p></div>
+              <div v-else-if="adminUserScreenshots.length % pageSize === 0" class="load-more-container" style="grid-column:1/-1;">
+                <button class="btn-start" @click="loadMoreAdminScreenshots">{{ t('message.loadMore') }}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1350,11 +1627,11 @@ const doChangeMode = async () => {
         <!-- TIME LOGS TAB -->
         <div v-if="adminTab === 'timelogs' && selectedUser">
           <div class="section-block">
-            <h2>⏱ Time Logs — {{ selectedUser.display_name }}</h2>
-            <div v-if="adminDrillLoading" class="empty-state"><p>Loading...</p></div>
+            <h2>⏱ {{ t('message.timeLogs') }} — {{ selectedUser.display_name }}</h2>
+            <div v-if="adminDrillLoading" class="empty-state"><p>{{ t('message.loading') }}</p></div>
             <div v-else class="app-table">
               <div class="app-row header-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
-                <span>App</span><span>Window</span><span>Start</span><span>End</span><span>Duration</span>
+                <span>{{ t('message.app') }}</span><span>{{ t('message.window') }}</span><span>{{ t('message.start') }}</span><span>{{ t('message.end') }}</span><span>{{ t('message.duration') }}</span>
               </div>
               <div v-for="log in adminUserTimeLogs" :key="log.id" class="app-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
                 <span class="app-name"><span class="app-icon">{{ appIcon(log.app_name) }}</span>{{ log.app_name }}</span>
@@ -1363,50 +1640,51 @@ const doChangeMode = async () => {
                 <span class="url-time">{{ log.end_time ? formatTimestamp(log.end_time) : '-' }}</span>
                 <span :class="['app-time', log.status === 'idle' ? 'idle' : '']">
                   {{ formatTime(log.duration) }}
-                  <span v-if="log.status === 'idle'" style="font-size:0.7rem; opacity:0.7;"> idle</span>
                 </span>
               </div>
-              <div v-if="adminUserTimeLogs.length === 0" class="empty-state"><p>No time logs for this date</p></div>
+              <div v-if="adminUserTimeLogs.length === 0" class="empty-state"><p>{{ t('message.noTimeLogsForDate') }}</p></div>
+              <div v-else-if="adminUserTimeLogs.length % pageSize === 0" class="load-more-container">
+                <button class="btn-start" @click="loadMoreAdminLogs">{{ t('message.loadMore') }}</button>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- ACTIVITY TAB -->
-        <div v-if="adminTab === 'activity' && selectedUser">
+          <div v-if="adminTab === 'activity' && selectedUser">
           <div class="section-block">
-            <h2>⌨️ Activity — {{ selectedUser.display_name }}</h2>
+            <h2>⌨️ {{ t('message.activity') }} — {{ selectedUser.display_name }}</h2>
             <small style="display:block; margin-bottom:12px; color:var(--text-muted);">
-              Keyboard &amp; mouse tracked individually. Idle = no input for {{ settings.idle_threshold }} min.
+              {{ t('message.activityTrackingDesc', { threshold: settings.idle_threshold }) }}
             </small>
-            <div v-if="adminDrillLoading" class="empty-state"><p>Loading...</p></div>
+            <div v-if="adminDrillLoading" class="empty-state"><p>{{ t('message.loading') }}</p></div>
             <div v-else>
               <!-- Keyboard / Mouse / Idle cards -->
               <div style="display:grid; grid-template-columns: repeat(4,1fr); gap:12px; margin-bottom:16px;">
-                <div class="card premium-card" style="border-left: 3px solid var(--accent);">
-                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">⌨️ Keyboard Events</h3>
-                  <p style="font-size:2rem; font-weight:800; color:var(--accent); margin:4px 0;">{{ adminInputStats.keyboard_count.toLocaleString() }}</p>
-                  <small style="color:var(--text-muted);">keystrokes detected</small>
+                <div class="card premium-card" style="border-left: 3px solid var(--accent); padding: 12px 16px;">
+                  <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em;">⌨️ {{ t('message.keyboardEvents') }}</h3>
+                  <p style="font-size:1.5rem; font-weight:800; color:var(--accent); margin:2px 0;">{{ adminInputStats.keyboard_count.toLocaleString() }}</p>
+                  <small style="color:var(--text-muted); font-size:0.7rem;">{{ t('message.keysPressed') }}</small>
                 </div>
-                <div class="card premium-card" style="border-left: 3px solid var(--success);">
-                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">🖱 Mouse Events</h3>
-                  <p style="font-size:2rem; font-weight:800; color:var(--success); margin:4px 0;">{{ adminInputStats.mouse_count.toLocaleString() }}</p>
-                  <small style="color:var(--text-muted);">movements detected</small>
+                <div class="card premium-card" style="border-left: 3px solid var(--success); padding: 12px 16px;">
+                  <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em;">🖱 {{ t('message.mouseEvents') }}</h3>
+                  <p style="font-size:1.5rem; font-weight:800; color:var(--success); margin:2px 0;">{{ adminInputStats.mouse_count.toLocaleString() }}</p>
+                  <small style="color:var(--text-muted); font-size:0.7rem;">{{ t('message.movementsDetected') }}</small>
                 </div>
-                <div class="card premium-card" style="border-left: 3px solid var(--warning);">
-                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">😴 Idle Periods</h3>
-                  <p style="font-size:2rem; font-weight:800; color:var(--warning); margin:4px 0;">{{ adminInputStats.idle_start_count }}</p>
-                  <small style="color:var(--text-muted);">idle starts logged</small>
+                <div class="card premium-card" style="border-left: 3px solid var(--warning); padding: 12px 16px;">
+                  <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em;">😴 {{ t('message.idlePeriods') }}</h3>
+                  <p style="font-size:1.5rem; font-weight:800; color:var(--warning); margin:2px 0;">{{ adminInputStats.idle_start_count }}</p>
+                  <small style="color:var(--text-muted); font-size:0.7rem;">{{ t('message.idleStartsLogged') }}</small>
                 </div>
-                <div class="card premium-card" style="border-left: 3px solid var(--text-muted);">
-                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">📋 Total Events</h3>
-                  <p style="font-size:2rem; font-weight:800; margin:4px 0;">{{ adminUserActivity.length.toLocaleString() }}</p>
-                  <small style="color:var(--text-muted);">raw log entries</small>
+                <div class="card premium-card" style="border-left: 3px solid var(--text-muted); padding: 12px 16px;">
+                  <h3 style="font-size:0.7rem; text-transform:uppercase; letter-spacing:.05em;">📋 {{ t('message.totalEvents') }}</h3>
+                  <p style="font-size:1.5rem; font-weight:800; margin:2px 0;">{{ adminUserActivity.length.toLocaleString() }}</p>
+                  <small style="color:var(--text-muted); font-size:0.7rem;">{{ t('message.rawLogEntries') }}</small>
                 </div>
               </div>
               <!-- Raw event log -->
               <div class="app-table">
                 <div class="app-row header-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
-                  <span>Type</span><span>Time</span><span>Input</span><span>Status</span>
+                  <span>{{ t('message.type') }}</span><span>{{ t('message.time') }}</span><span>{{ t('message.input') }}</span><span>{{ t('message.status') }}</span>
                 </div>
                 <div v-for="act in adminUserActivity" :key="act.id" class="app-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
                   <span class="app-name" style="display:flex; align-items:center; gap:6px;">
@@ -1414,27 +1692,58 @@ const doChangeMode = async () => {
                     <span v-else-if="act.event_type === 'mouse'">🖱</span>
                     <span v-else-if="act.event_type === 'idle_start'">😴</span>
                     <span v-else-if="act.event_type === 'idle_end'">▶️</span>
+                    <span v-else-if="act.event_type.startsWith('url:')">🌐</span>
                     <span v-else>📌</span>
-                    {{ act.event_type }}
+                    {{ act.event_type.startsWith('url:') ? act.event_type.replace('url:', '') : act.event_type }}
                   </span>
                   <span class="url-time">{{ formatTimestamp(act.timestamp) }}</span>
                   <span style="font-size:0.8rem; font-weight:600;"
                     :style="{ color: act.event_type==='keyboard' ? 'var(--accent)' : act.event_type==='mouse' ? 'var(--success)' : 'var(--text-muted)' }">
-                    {{ act.event_type === 'keyboard' ? 'KB' : act.event_type === 'mouse' ? 'Mouse' : '—' }}
+                    {{ act.event_type === 'keyboard' ? 'KB' : act.event_type === 'mouse' ? t('message.mouse') : '—' }}
                   </span>
                   <span :style="{ color: act.activity_status === 'idle' ? 'var(--warning)' : 'var(--success)', fontWeight: '600', fontSize: '0.8rem' }">
                     {{ act.activity_status }}
                   </span>
                 </div>
-                <div v-if="adminUserActivity.length === 0" class="empty-state"><p>No activity events for this date</p></div>
+                <div v-if="adminUserActivity.length === 0" class="empty-state"><p>{{ t('message.noActivityForDate') }}</p></div>
+                <div v-else-if="adminUserActivity.length % pageSize === 0" class="load-more-container">
+                  <button class="btn-start" @click="loadMoreAdminActivity">{{ t('message.loadMore') }}</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
+        <!-- URLS TAB -->
+        <div v-if="adminTab === 'urls' && selectedUser">
+          <div class="section-block">
+            <h2>🌐 {{ t('message.urls') }} — {{ selectedUser.display_name }}</h2>
+            <div v-if="adminDrillLoading" class="empty-state"><p>{{ t('message.loading') }}</p></div>
+            <div v-else>
+              <div class="url-list">
+                <div v-for="entry in adminUserUrls" :key="entry.id" class="url-row">
+                  <span class="url-time">{{ formatTimestamp(entry.timestamp) }}</span>
+                  <span class="url-text">{{ entry.url }}</span>
+                </div>
+                <div v-if="adminUserUrls.length === 0" class="empty-state">{{ t('message.noHistoryForDate') }}</div>
+                <div v-else-if="adminUserUrls.length % pageSize === 0" class="load-more-container">
+                  <button class="btn-start" @click="loadMoreAdminUrls">{{ t('message.loadMore') }}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
       </div>
 
     </main>
+
+    <!-- Global Fullscreen Screenshot Lightbox -->
+    <div v-if="fullscreenScreenshot" class="screenshot-lightbox" @click="closeFullscreen">
+      <img :src="convertFileSrc(fullscreenScreenshot)" alt="Fullscreen Screenshot" />
+      <button class="lightbox-close" @click.stop="closeFullscreen">×</button>
+    </div>
   </div>
 </template>
 
@@ -1469,6 +1778,43 @@ const doChangeMode = async () => {
   --danger: #ef4444;
   --warning: #f59e0b;
   --bar-bg: #272a35;
+}
+
+/* ─── Lightbox ─────────────────────────────────────── */
+.screenshot-lightbox {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+}
+.screenshot-lightbox img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  object-fit: contain;
+}
+.lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 30px;
+  background: none;
+  border: none;
+  color: white;
+  font-size: 2.5rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.lightbox-close:hover {
+  color: #ccc;
 }
 
 * { box-sizing: border-box; margin: 0; }
@@ -1594,34 +1940,41 @@ header h1 { margin-top: 0; margin-bottom: 24px; font-size: 1.8rem; font-weight: 
 /* Summary Cards */
 .summary-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 16px;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 .premium-card {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 16px;
   background: linear-gradient(135deg, var(--card-bg) 0%, rgba(99, 102, 241, 0.04) 100%);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  transition: all 0.2s ease;
+}
+.premium-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.06);
 }
 .premium-card h3 {
-  margin: 0 0 8px 0;
-  font-size: 0.85rem;
-  font-weight: 500;
+  margin: 0 0 6px 0;
+  font-size: 0.72rem;
+  font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
-.big-stat { font-size: 2rem; font-weight: 800; color: var(--accent); margin: 0; }
+.big-stat { font-size: 1.6rem; font-weight: 800; color: var(--accent); margin: 0; line-height: 1.2; }
 .big-stat.idle { color: var(--warning); }
 .big-stat.session { color: var(--success); }
 .big-stat.total { color: var(--text-color); }
 
 /* Section Blocks */
-.section-block { margin-bottom: 32px; }
-.section-block h2 { font-size: 1.2rem; font-weight: 700; margin-bottom: 16px; }
+.section-block { margin-bottom: 24px; }
+.section-block h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }
 
 /* App Table */
 .app-table {
@@ -1632,11 +1985,14 @@ header h1 { margin-top: 0; margin-bottom: 24px; font-size: 1.8rem; font-weight: 
 }
 .app-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 0.5fr 1.5fr;
+  grid-template-columns: 2fr 1fr 1fr;
   padding: 12px 20px;
   align-items: center;
   border-bottom: 1px solid var(--border-color);
   font-size: 0.9rem;
+}
+.app-table.with-category .app-row {
+  grid-template-columns: 3fr 1fr 1fr 1.5fr;
 }
 .app-row:last-child { border-bottom: none; }
 .header-row {
@@ -1647,13 +2003,47 @@ header h1 { margin-top: 0; margin-bottom: 24px; font-size: 1.8rem; font-weight: 
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-.app-name { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+
+.col-app-info { display: flex; flex-direction: column; gap: 4px; }
+.app-main-info { display: flex; align-items: center; justify-content: space-between; }
+.app-name { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-color); }
 .app-icon { font-size: 1.2rem; }
-.app-time { font-weight: 600; color: var(--accent); }
-.app-switches { text-align: center; color: var(--text-muted); }
-.app-percent { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); }
-.bar-bg { flex: 1; height: 6px; background: var(--bar-bg); border-radius: 3px; overflow: hidden; }
-.bar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.5s ease; }
+
+.app-progress-container { display: flex; align-items: center; gap: 10px; }
+.bar-bg { flex: 1; height: 4px; background: var(--bar-bg); border-radius: 2px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.5s ease; }
+.app-percent-text { font-size: 0.75rem; color: var(--text-muted); min-width: 30px; text-align: right; }
+
+.col-time-val { font-weight: 600; color: var(--accent); text-align: center; }
+.col-switches-val { text-align: center; color: var(--text-muted); font-family: monospace; }
+.col-category-val { display: flex; justify-content: flex-end; }
+
+/* Category Badge Select */
+.category-badge-select {
+  appearance: none;
+  border: none;
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+  width: auto;
+  min-width: 110px;
+  transition: all 0.2s ease;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  color: white;
+}
+
+.category-badge-select.productive { background-color: var(--success); }
+.category-badge-select.neutral { background-color: var(--text-muted); }
+.category-badge-select.unproductive { background-color: var(--danger); }
+.category-badge-select:hover { opacity: 0.9; transform: scale(1.02); }
+.category-badge-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.2); }
+.category-badge-select option { background-color: var(--card-bg); color: var(--text-color); }
 
 /* URL List */
 .url-list {
@@ -1690,13 +2080,32 @@ header h1 { margin-top: 0; margin-bottom: 24px; font-size: 1.8rem; font-weight: 
 }
 
 /* ─── Settings ─────────────────────────────────────────────────── */
+/* ─── Settings ─────────────────────────────────────────────────── */
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
 }
-.setting-card { display: flex; flex-direction: column; gap: 12px; }
-.setting-card label { font-weight: 600; font-size: 0.95rem; }
+.setting-card { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 10px; 
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  background: var(--card-bg);
+}
+.setting-card:hover:not(.card-disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  border-color: var(--accent);
+}
+.setting-card label { 
+  font-weight: 700; 
+  font-size: 0.9rem; 
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 
 select, input[type="text"], input[type="password"], input[type="number"] {
   width: 100%;
@@ -1786,8 +2195,10 @@ input[type="checkbox"] { width: 24px; height: 24px; accent-color: var(--accent);
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
-.view-header h1 { margin-bottom: 0; }
+.view-header h1 { margin: 0; font-size: 1.5rem; }
 .filter-controls {
   display: flex;
   gap: 12px;
@@ -2011,6 +2422,238 @@ input[type="date"] {
   transition: all 0.2s ease;
 }
 .btn-danger:hover { filter: brightness(1.1); }
+
+/* ─── Settings Reorganization ────────────────────────────────────── */
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 0 4px;
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Categories & Badges */
+.badge-select {
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  max-width: 160px;
+  text-align: left;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='currentColor' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.badge-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.badge-select.productive {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.badge-select.productive:hover:not(:disabled) {
+  background-color: rgba(16, 185, 129, 0.15);
+}
+.badge-select.neutral {
+  background-color: rgba(100, 116, 139, 0.1);
+  color: #475569;
+  border-color: rgba(100, 116, 139, 0.2);
+}
+.badge-select.neutral:hover:not(:disabled) {
+  background-color: rgba(100, 116, 139, 0.15);
+}
+.badge-select.unproductive {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.badge-select.unproductive:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.categories-manage-table .app-row {
+  align-items: center;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+.categories-manage-table .app-row:last-child {
+  border-bottom: none;
+}
+.app-name-cell {
+  font-weight: 600;
+  color: var(--text-color);
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.app-name-cell .app-icon {
+  font-size: 1.2rem;
+  background: var(--bg-color);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+/* Productivity Table */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+th, td {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.9rem;
+}
+th {
+  background: var(--bg-color);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(99, 102, 241, 0.02); }
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.admin-lock-hint {
+  font-size: 0.75rem;
+  background: rgba(99,102,241,0.1);
+  color: var(--accent);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.setting-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  display: block;
+  line-height: 1.4;
+}
+.card-disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+.lock-icon {
+  font-size: 0.85rem;
+  margin-left: 4px;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.status-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-weight: 600;
+}
+.btn-action-outline {
+  width: 100%;
+  background: transparent;
+  border: 1.5px solid var(--border-color);
+  color: var(--text-color);
+  padding: 10px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 4px;
+}
+.btn-action-outline:hover {
+  background: var(--border-color);
+  border-color: var(--text-muted);
+}
+.system-mode-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.mode-info { flex: 1; }
+.mode-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.danger-header { flex: 1; }
+.danger-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 24px;
+}
+.danger-card .danger-label { margin-bottom: 4px; }
+.danger-card .btn-danger { min-width: 160px; }
+
+/* Polishing Locked States */
+.card-disabled label {
+  color: var(--text-muted);
+}
+.lock-icon {
+  opacity: 0.6;
+  filter: grayscale(1);
+}
+.admin-lock-hint {
+  animation: fadeIn 0.3s ease;
+}
+
+/* Section Header Polishing */
+.section-title {
+  border-left: 4px solid var(--accent);
+  padding-left: 12px;
+  height: 24px;
+  line-height: 24px;
+}
+
+/* Better Select Styling */
+select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2364748b' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px !important;
+}
 
 /* ─── Admin Tabs ─────────────────────────────────────────────────── */
 .admin-tabs {

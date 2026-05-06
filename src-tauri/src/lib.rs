@@ -78,17 +78,20 @@ fn cmd_get_tracking() -> Result<String, String> {
 
 #[tauri::command]
 fn cmd_get_time_logs_range(app_handle: tauri::AppHandle, from: String, to: String, limit: u32, offset: u32) -> Result<Vec<db::TimeLogEntry>, String> {
-    db::get_time_logs_range(&app_handle, &from, &to, limit, offset).map_err(|e| e.to_string())
+    let uid = tracking::get_active_user_id();
+    db::get_time_logs_range(&app_handle, &uid, &from, &to, limit, offset).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn cmd_get_urls_range(app_handle: tauri::AppHandle, from: String, to: String, limit: u32, offset: u32) -> Result<Vec<db::UrlEntryFull>, String> {
-    db::get_urls_range(&app_handle, &from, &to, limit, offset).map_err(|e| e.to_string())
+    let uid = tracking::get_active_user_id();
+    db::get_urls_range(&app_handle, &uid, &from, &to, limit, offset).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn cmd_get_screenshots_range(app_handle: tauri::AppHandle, from: String, to: String, limit: u32, offset: u32) -> Result<Vec<db::ScreenshotEntry>, String> {
-    db::get_screenshots_range(&app_handle, &from, &to, limit, offset).map_err(|e| e.to_string())
+    let uid = tracking::get_active_user_id();
+    db::get_screenshots_range(&app_handle, &uid, &from, &to, limit, offset).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -227,6 +230,18 @@ fn cmd_get_user_activity(
 }
 
 #[tauri::command]
+fn cmd_get_user_urls(
+    app_handle: tauri::AppHandle,
+    user_id: String,
+    from: String,
+    to: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<db::UrlEntryFull>, String> {
+    db::get_urls_range(&app_handle, &user_id, &from, &to, limit, offset).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn cmd_get_user_input_stats(
     app_handle: tauri::AppHandle,
     user_id: String,
@@ -234,6 +249,11 @@ fn cmd_get_user_input_stats(
     to: String,
 ) -> Result<db::UserInputStats, String> {
     db::get_user_input_stats(&app_handle, &user_id, &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_all_app_categories(app_handle: tauri::AppHandle) -> Result<Vec<db::AppCategoryEntry>, String> {
+    db::get_all_app_categories(&app_handle).map_err(|e| e.to_string())
 }
 
 // ─── Tauri Setup ──────────────────────────────────────────────────
@@ -349,6 +369,8 @@ pub fn run() {
             cmd_get_user_time_logs,
             cmd_get_user_activity,
             cmd_get_user_input_stats,
+            cmd_get_user_urls,
+            cmd_get_all_app_categories,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
