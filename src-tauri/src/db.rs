@@ -31,6 +31,7 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
             screenshot_location TEXT NOT NULL DEFAULT '',
             backup_frequency TEXT NOT NULL DEFAULT 'never',
             backup_location TEXT NOT NULL DEFAULT '',
+            idle_threshold INTEGER NOT NULL DEFAULT 5,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             synced_at TEXT
@@ -89,6 +90,7 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
 
         CREATE TABLE IF NOT EXISTS activity_events (
             id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL DEFAULT 'default_user',
             type TEXT NOT NULL,
             timestamp TEXT NOT NULL,
             created_at TEXT NOT NULL,
@@ -106,12 +108,14 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
     // Migrations for existing databases
     let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN status TEXT NOT NULL DEFAULT 'active'", []);
     let _ = conn.execute("ALTER TABLE activity_events ADD COLUMN activity_status TEXT NOT NULL DEFAULT 'active'", []);
+    let _ = conn.execute("ALTER TABLE activity_events ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default_user'", []);
     let _ = conn.execute("CREATE TABLE IF NOT EXISTS app_categories (app_name TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'neutral')", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN idle_threshold INTEGER NOT NULL DEFAULT 5", []);
 
     // Insert default settings if none exists
     conn.execute(
-        "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, created_at, updated_at)
-         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', ?3, ?3
+        "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, created_at, updated_at)
+         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, ?3, ?3
          WHERE NOT EXISTS (SELECT 1 FROM settings WHERE user_id = ?2)",
         (
             uuid::Uuid::new_v4().to_string(),
@@ -131,12 +135,13 @@ pub struct Settings {
     pub screenshot_location: String,
     pub backup_frequency: String,
     pub backup_location: String,
+    pub idle_threshold: i32,
 }
 
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location FROM settings WHERE user_id = 'default_user' LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5) FROM settings WHERE user_id = 'default_user' LIMIT 1")?;
     let settings = stmt.query_row([], |row| {
         Ok(Settings {
             language: row.get(0)?,
@@ -146,6 +151,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             screenshot_location: row.get(4)?,
             backup_frequency: row.get(5)?,
             backup_location: row.get(6)?,
+            idle_threshold: row.get(7)?,
         })
     })?;
     Ok(settings)
@@ -163,7 +169,8 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             screenshot_location = ?5,
             backup_frequency = ?6,
             backup_location = ?7,
-            updated_at = ?8 
+            idle_threshold = ?8,
+            updated_at = ?9 
         WHERE user_id = 'default_user'",
         params![
             settings.language,
@@ -173,6 +180,7 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.screenshot_location,
             settings.backup_frequency,
             settings.backup_location,
+            settings.idle_threshold,
             chrono::Utc::now().to_rfc3339()
         ],
     )?;
@@ -490,6 +498,136 @@ pub fn get_screenshot_interval_secs(app: &AppHandle) -> u64 {
         return (settings.screenshot_interval as u64) * 60;
     }
     600 // default 10 min
+}
+
+pub fn get_idle_threshold_secs(app: &AppHandle) -> u64 {
+    if let Ok(settings) = get_settings(app) {
+        return (settings.idle_threshold as u64) * 60;
+    }
+    300 // default 5 min
+}
+
+// ─── Admin: Per-User Queries ──────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AdminScreenshotEntry {
+    pub id: String,
+    pub user_id: String,
+    pub display_name: String,
+    pub file_path: String,
+    pub captured_at: String,
+}
+
+pub fn get_user_screenshots(app: &AppHandle, user_id: &str, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<AdminScreenshotEntry>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.user_id, COALESCE(u.display_name, s.user_id), s.file_path, s.captured_at
+         FROM screenshots s
+         LEFT JOIN auth_users u ON s.user_id = u.id
+         WHERE s.user_id = ?1 AND date(s.captured_at) >= ?2 AND date(s.captured_at) <= ?3
+         ORDER BY s.captured_at DESC LIMIT ?4 OFFSET ?5"
+    )?;
+    let rows = stmt.query_map(params![user_id, from, to, limit, offset], |row| {
+        Ok(AdminScreenshotEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            display_name: row.get(2)?,
+            file_path: row.get(3)?,
+            captured_at: row.get(4)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AdminTimeLogEntry {
+    pub id: String,
+    pub user_id: String,
+    pub display_name: String,
+    pub app_name: String,
+    pub window_title: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub duration: i64,
+    pub status: String,
+}
+
+pub fn get_user_time_logs(app: &AppHandle, user_id: &str, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<AdminTimeLogEntry>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.user_id, COALESCE(u.display_name, t.user_id), t.app_name, t.window_title,
+                t.start_time, COALESCE(t.end_time,''), COALESCE(t.duration,0), COALESCE(t.status,'active')
+         FROM time_logs t
+         LEFT JOIN auth_users u ON t.user_id = u.id
+         WHERE t.user_id = ?1 AND date(t.start_time) >= ?2 AND date(t.start_time) <= ?3
+         ORDER BY t.start_time DESC LIMIT ?4 OFFSET ?5"
+    )?;
+    let rows = stmt.query_map(params![user_id, from, to, limit, offset], |row| {
+        Ok(AdminTimeLogEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            display_name: row.get(2)?,
+            app_name: row.get(3)?,
+            window_title: row.get(4)?,
+            start_time: row.get(5)?,
+            end_time: row.get(6)?,
+            duration: row.get(7)?,
+            status: row.get(8)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AdminActivityEntry {
+    pub id: String,
+    pub event_type: String,
+    pub timestamp: String,
+    pub activity_status: String,
+}
+
+pub fn get_user_activity(app: &AppHandle, user_id: &str, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<AdminActivityEntry>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, type, timestamp, COALESCE(activity_status,'active')
+         FROM activity_events
+         WHERE user_id = ?1 AND date(timestamp) >= ?2 AND date(timestamp) <= ?3
+         ORDER BY timestamp DESC LIMIT ?4 OFFSET ?5"
+    )?;
+    let rows = stmt.query_map(params![user_id, from, to, limit, offset], |row| {
+        Ok(AdminActivityEntry {
+            id: row.get(0)?,
+            event_type: row.get(1)?,
+            timestamp: row.get(2)?,
+            activity_status: row.get(3)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UserInputStats {
+    pub keyboard_count: i64,
+    pub mouse_count: i64,
+    pub idle_start_count: i64,
+}
+
+pub fn get_user_input_stats(app: &AppHandle, user_id: &str, from: &str, to: &str) -> Result<UserInputStats> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let keyboard_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'keyboard' AND date(timestamp) >= ?2 AND date(timestamp) <= ?3",
+        params![user_id, from, to], |r| r.get(0))?;
+    let mouse_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'mouse' AND date(timestamp) >= ?2 AND date(timestamp) <= ?3",
+        params![user_id, from, to], |r| r.get(0))?;
+    let idle_start_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'idle_start' AND date(timestamp) >= ?2 AND date(timestamp) <= ?3",
+        params![user_id, from, to], |r| r.get(0))?;
+    Ok(UserInputStats { keyboard_count, mouse_count, idle_start_count })
 }
 
 pub fn update_app_category(app: &AppHandle, app_name: &str, category: &str) -> Result<()> {

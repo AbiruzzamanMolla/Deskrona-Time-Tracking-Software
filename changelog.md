@@ -9,14 +9,21 @@ All notable changes to **Time Guardian** will be documented in this file.
 - **Dual-Mode Support**: Introduced a "First Run" wizard to select between **Single User** (local) and **Multi-User** (enterprise) modes.
 - **Hierarchical Identity System**: Implemented a multi-tenant schema with Company, Admin, and Employee roles.
 - **Local Authentication**: Added a secure local login system with password hashing and session persistence.
-- **Admin Dashboard**: Created a dedicated, role-restricted dashboard for admins to manage team members and view productivity statistics.
+- **Admin Dashboard — Team Productivity**: Admin can now view every team member's active time and session count in a single table.
+- **Admin Dashboard — Per-User Drill-Down**: Admins can inspect any team member's **Screenshots**, **Time Logs**, and **Activity** records by clicking drill-down action buttons (📸 ⏱ ⌨️) directly from the productivity table.
+- **Admin Dashboard — Date Picker**: All drill-down views are scoped to a selected date (defaults to today), with a date picker in the admin header.
+- **Admin Dashboard — Tab Navigation**: Tabbed UI (Team / Screenshots / Time Logs / Activity) with breadcrumb showing which user is being viewed.
+- **Activity Monitoring — Keyboard & Mouse Separately**: Background tracker now logs `keyboard` and `mouse` events as distinct activity_events rows, enabling separate analysis.
+- **Idle Timeout Setting**: New "Idle Timeout (minutes)" field in Settings — configures when the tracker marks a period as idle if no keyboard or mouse input is detected. Default: 5 minutes.
+- **Dynamic Idle Threshold**: The idle threshold is reloaded from the database every 60 seconds by the background tracking thread, so changes take effect without a restart.
 - **Data Isolation**: Updated the database engine to enforce strict data separation between users and companies.
-- **Settings Expansion**: Added global tracking configuration (activity intervals, idle timeouts) persisted at the tenant level.
+- **Admin User Management**: Admins can add new team members with username, display name, password, and role assignment.
 
 ### 🐛 Fixed
 - **Screenshot Rendering**: Fixed long-standing issue with locally stored screenshots not displaying in the UI.
 - **Session Security**: Resolved a bug where administrative views remained accessible to employees after logout/login cycles.
 - **Logout Stability**: Fixed a ReferenceError in the logout sequence that prevented the application from returning to the login screen.
+- **TypeScript Strict Mode**: Eliminated TS2367 type overlap error in admin drill-down tab guard.
 
 ## [0.0.3] - 2026-05-05
 

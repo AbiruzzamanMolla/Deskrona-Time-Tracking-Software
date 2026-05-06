@@ -78,7 +78,7 @@ pub fn start_tracking(app: AppHandle) {
     let last_input_time: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now()));
     let idle_logged: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
-    let idle_threshold = Duration::from_secs(300);
+    let idle_threshold_base = Duration::from_secs(crate::db::get_idle_threshold_secs(&app));
 
     // --- Screenshot Thread ---
     let app_clone = app.clone();
@@ -125,9 +125,19 @@ pub fn start_tracking(app: AppHandle) {
         let device_state = DeviceState::new();
         let mut last_mouse_pos = device_state.get_mouse().coords;
         let mut last_keys: Vec<device_query::Keycode> = device_state.get_keys();
+        // Reload threshold every N seconds to respect settings changes
+        let mut idle_threshold = idle_threshold_base;
+        let mut threshold_reload_counter: u32 = 0;
 
         loop {
             std::thread::sleep(Duration::from_secs(1));
+
+            // Reload idle threshold from settings every 60 seconds
+            threshold_reload_counter += 1;
+            if threshold_reload_counter >= 60 {
+                threshold_reload_counter = 0;
+                idle_threshold = Duration::from_secs(crate::db::get_idle_threshold_secs(&app));
+            }
 
             // Check tracking state
             let state = TRACKING_STATE.load(Ordering::SeqCst);
@@ -180,8 +190,24 @@ pub fn start_tracking(app: AppHandle) {
                 if was_idle {
                     if let Ok(conn) = Connection::open(&db_path) {
                         let _ = conn.execute(
-                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, 'idle_end', ?2, ?2, NULL, 'active')",
-                            (Uuid::new_v4().to_string(), Utc::now().to_rfc3339()),
+                            "INSERT INTO activity_events (id, user_id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, 'idle_end', ?3, ?3, NULL, 'active')",
+                            (Uuid::new_v4().to_string(), get_active_user_id(), Utc::now().to_rfc3339()),
+                        );
+                    }
+                }
+                // Log keyboard/mouse input events separately
+                if let Ok(conn) = Connection::open(&db_path) {
+                    let uid = get_active_user_id();
+                    if keys_changed {
+                        let _ = conn.execute(
+                            "INSERT INTO activity_events (id, user_id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, 'keyboard', ?3, ?3, NULL, 'active')",
+                            (Uuid::new_v4().to_string(), &uid, Utc::now().to_rfc3339()),
+                        );
+                    }
+                    if mouse_moved {
+                        let _ = conn.execute(
+                            "INSERT INTO activity_events (id, user_id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, 'mouse', ?3, ?3, NULL, 'active')",
+                            (Uuid::new_v4().to_string(), &uid, Utc::now().to_rfc3339()),
                         );
                     }
                 }
@@ -196,8 +222,8 @@ pub fn start_tracking(app: AppHandle) {
                     *idle = true;
                     if let Ok(conn) = Connection::open(&db_path) {
                         let _ = conn.execute(
-                            "INSERT INTO activity_events (id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, 'idle_start', ?2, ?2, NULL, 'idle')",
-                            (Uuid::new_v4().to_string(), Utc::now().to_rfc3339()),
+                            "INSERT INTO activity_events (id, user_id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, 'idle_start', ?3, ?3, NULL, 'idle')",
+                            (Uuid::new_v4().to_string(), get_active_user_id(), Utc::now().to_rfc3339()),
                         );
                     }
                 }

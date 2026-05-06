@@ -19,6 +19,7 @@ interface Settings {
   screenshot_location: string;
   backup_frequency: string;
   backup_location: string;
+  idle_threshold: number;
 }
 
 interface Session {
@@ -114,6 +115,7 @@ const settings = ref<Settings>({
   screenshot_location: "",
   backup_frequency: "never",
   backup_location: "",
+  idle_threshold: 5,
 });
 
 const currentView = ref('dashboard');
@@ -160,6 +162,20 @@ const showCreateUser = ref(false);
 const newUser = ref<CreateUserPayload>({ username: '', display_name: '', password: '', role: 'employee' });
 const createUserError = ref('');
 const createUserLoading = ref(false);
+
+// Admin drill-down state
+const adminTab = ref<'team' | 'screenshots' | 'timelogs' | 'activity'>('team');
+const selectedUser = ref<AuthUser | null>(null);
+const adminDrillDate = ref(new Date().toISOString().split('T')[0]);
+interface AdminScreenshot { id: string; user_id: string; display_name: string; file_path: string; captured_at: string; }
+interface AdminTimeLog { id: string; user_id: string; display_name: string; app_name: string; window_title: string; start_time: string; end_time: string; duration: number; status: string; }
+interface AdminActivity { id: string; event_type: string; timestamp: string; activity_status: string; }
+const adminUserScreenshots = ref<AdminScreenshot[]>([]);
+const adminUserTimeLogs = ref<AdminTimeLog[]>([]);
+const adminUserActivity = ref<AdminActivity[]>([]);
+const adminDrillLoading = ref(false);
+interface InputStats { keyboard_count: number; mouse_count: number; idle_start_count: number; }
+const adminInputStats = ref<InputStats>({ keyboard_count: 0, mouse_count: 0, idle_start_count: 0 });
 
 const isAdmin = computed(() => currentUser.value?.role === 'admin');
 const isMultiUser = computed(() => appConfig.value.mode === 'multi_user');
@@ -589,6 +605,35 @@ const loadAdminData = async () => {
     adminUsers.value = users;
     adminStats.value = stats;
   } catch (e) { console.error('Failed to load admin data', e); }
+};
+
+const loadUserDetail = async (user: AuthUser, tab: 'screenshots' | 'timelogs' | 'activity') => {
+  selectedUser.value = user;
+  adminTab.value = tab;
+  adminDrillLoading.value = true;
+  const from = adminDrillDate.value;
+  const to = adminDrillDate.value;
+  try {
+    if (tab === 'screenshots') {
+      adminUserScreenshots.value = await invoke('cmd_get_user_screenshots', { userId: user.id, from, to, limit: 100, offset: 0 });
+    } else if (tab === 'timelogs') {
+      adminUserTimeLogs.value = await invoke('cmd_get_user_time_logs', { userId: user.id, from, to, limit: 200, offset: 0 });
+    } else if (tab === 'activity') {
+      const [acts, stats] = await Promise.all([
+        invoke<AdminActivity[]>('cmd_get_user_activity', { userId: user.id, from, to, limit: 500, offset: 0 }),
+        invoke<InputStats>('cmd_get_user_input_stats', { userId: user.id, from, to }),
+      ]);
+      adminUserActivity.value = acts;
+      adminInputStats.value = stats;
+    }
+  } catch (e) { console.error('Failed to load user detail', e); }
+  finally { adminDrillLoading.value = false; }
+};
+
+const refreshAdminDrill = async () => {
+  if (!selectedUser.value) return;
+  if (adminTab.value === 'team') return;
+  await loadUserDetail(selectedUser.value, adminTab.value);
 };
 
 const doCreateUser = async () => {
@@ -1130,8 +1175,13 @@ const doChangeMode = async () => {
             <input type="checkbox" v-model="settings.auto_start_on_boot" />
           </div>
           <div class="card setting-card">
-            <label>{{ t('message.screenshotInterval') }}</label>
+            <label>Screenshot Interval (minutes)</label>
             <input type="number" v-model="settings.screenshot_interval" min="1" />
+          </div>
+          <div class="card setting-card">
+            <label>Idle Timeout (minutes)</label>
+            <small style="display:block; color: var(--text-muted); margin-bottom:6px;">Mark as idle if no keyboard/mouse activity for this duration</small>
+            <input type="number" v-model="settings.idle_threshold" min="1" max="60" />
           </div>
           <div class="card setting-card">
             <label>{{ t('message.screenshotLocation') }}</label>
@@ -1192,75 +1242,196 @@ const doChangeMode = async () => {
       <div v-if="currentView === 'admin'" class="view-admin">
         <header class="view-header">
           <h1>🛡️ Admin Dashboard</h1>
-          <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size:0.9rem;">
-            🔄 Refresh
-          </button>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="date" v-model="adminDrillDate" @change="refreshAdminDrill" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--card-bg); color:var(--text-color); font-size:0.9rem;" />
+            <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size:0.9rem;">🔄 Refresh</button>
+          </div>
         </header>
 
-        <!-- Productivity Stats Table -->
-        <div class="section-block">
-          <h2>Today's Team Productivity</h2>
-          <div class="app-table">
-            <div class="app-row header-row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
-              <span>Employee</span><span>Active Time</span><span>Sessions</span><span>Username</span>
+        <!-- Admin Tabs -->
+        <div class="admin-tabs">
+          <button :class="['admin-tab', { 'admin-tab-active': adminTab === 'team' }]" @click="adminTab = 'team'; selectedUser = null">👥 Team</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'screenshots' }]" @click="loadUserDetail(selectedUser, 'screenshots')">📸 Screenshots</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'timelogs' }]" @click="loadUserDetail(selectedUser, 'timelogs')">⏱ Time Logs</button>
+          <button v-if="selectedUser" :class="['admin-tab', { 'admin-tab-active': adminTab === 'activity' }]" @click="loadUserDetail(selectedUser, 'activity')">⌨️ Activity</button>
+          <span v-if="selectedUser" style="margin-left:8px; font-size:0.85rem; color:var(--text-muted); align-self:center;">Viewing: <strong>{{ selectedUser.display_name }}</strong></span>
+        </div>
+
+        <!-- TEAM TAB -->
+        <div v-if="adminTab === 'team'">
+          <!-- Productivity Stats -->
+          <div class="section-block">
+            <h2>Today's Team Productivity</h2>
+            <div class="app-table">
+              <div class="app-row header-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr;">
+                <span>Employee</span><span>Active Time</span><span>Sessions</span><span>Username</span><span>Actions</span>
+              </div>
+              <div v-for="stat in adminStats" :key="stat.user_id" class="app-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr;">
+                <span class="app-name">👤 {{ stat.display_name }}</span>
+                <span class="app-time">{{ formatTime(stat.total_active_seconds) }}</span>
+                <span class="app-switches">{{ stat.session_count }}</span>
+                <span class="app-time" style="font-size:0.85rem; color: var(--text-muted);">{{ stat.username }}</span>
+                <span style="display:flex; gap:4px;">
+                  <button class="btn-drill" @click="loadUserDetail(adminUsers.find(u => u.id === stat.user_id)!, 'screenshots')">📸</button>
+                  <button class="btn-drill" @click="loadUserDetail(adminUsers.find(u => u.id === stat.user_id)!, 'timelogs')">⏱</button>
+                  <button class="btn-drill" @click="loadUserDetail(adminUsers.find(u => u.id === stat.user_id)!, 'activity')">⌨️</button>
+                </span>
+              </div>
+              <div v-if="adminStats.length === 0" class="empty-state"><p>No data today</p></div>
             </div>
-            <div v-for="stat in adminStats" :key="stat.user_id" class="app-row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
-              <span class="app-name">👤 {{ stat.display_name }}</span>
-              <span class="app-time">{{ formatTime(stat.total_active_seconds) }}</span>
-              <span class="app-switches">{{ stat.session_count }}</span>
-              <span class="app-time" style="font-size:0.85rem; color: var(--text-muted);">{{ stat.username }}</span>
+          </div>
+
+          <!-- User Management -->
+          <div class="section-block">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+              <h2>Team Members</h2>
+              <button class="btn-browse" @click="showCreateUser = !showCreateUser" style="padding: 8px 16px; font-size:0.9rem;">+ Add User</button>
             </div>
-            <div v-if="adminStats.length === 0" class="empty-state"><p>No data today</p></div>
+
+            <!-- Create User Form -->
+            <div v-if="showCreateUser" class="card" style="margin-bottom: 20px; padding: 24px;">
+              <h3 style="margin-bottom:16px;">New Team Member</h3>
+              <div class="wizard-form">
+                <label>Username</label>
+                <input type="text" v-model="newUser.username" placeholder="jane_doe" />
+                <label>Display Name</label>
+                <input type="text" v-model="newUser.display_name" placeholder="Jane Doe" />
+                <label>Password</label>
+                <input type="password" v-model="newUser.password" placeholder="Temporary password" />
+                <label>Role</label>
+                <select v-model="newUser.role">
+                  <option value="employee">Employee</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div v-if="createUserError" class="wizard-error" style="margin-top:12px;">{{ createUserError }}</div>
+              <div style="display:flex; gap:12px; margin-top:16px;">
+                <button class="btn-stop" style="flex:1;" @click="showCreateUser = false">Cancel</button>
+                <button class="btn-start" style="flex:2;" :disabled="createUserLoading" @click="doCreateUser">
+                  {{ createUserLoading ? 'Creating...' : 'Create User' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Users Table -->
+            <div class="app-table">
+              <div class="app-row header-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
+                <span>Name</span><span>Username</span><span>Role</span>
+              </div>
+              <div v-for="user in adminUsers" :key="user.id" class="app-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
+                <span class="app-name">{{ user.display_name }}</span>
+                <span class="url-text">{{ user.username }}</span>
+                <span>
+                  <span :class="['role-badge', user.role === 'admin' ? 'role-admin' : 'role-emp']">{{ user.role }}</span>
+                </span>
+              </div>
+              <div v-if="adminUsers.length === 0" class="empty-state"><p>No team members yet</p></div>
+            </div>
           </div>
         </div>
 
-        <!-- User Management -->
-        <div class="section-block">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h2>Team Members</h2>
-            <button class="btn-browse" @click="showCreateUser = !showCreateUser" style="padding: 8px 16px; font-size:0.9rem;">+ Add User</button>
-          </div>
-
-          <!-- Create User Form -->
-          <div v-if="showCreateUser" class="card" style="margin-bottom: 20px; padding: 24px;">
-            <h3 style="margin-bottom:16px;">New Team Member</h3>
-            <div class="wizard-form">
-              <label>Username</label>
-              <input type="text" v-model="newUser.username" placeholder="jane_doe" />
-              <label>Display Name</label>
-              <input type="text" v-model="newUser.display_name" placeholder="Jane Doe" />
-              <label>Password</label>
-              <input type="password" v-model="newUser.password" placeholder="Temporary password" />
-              <label>Role</label>
-              <select v-model="newUser.role">
-                <option value="employee">Employee</option>
-                <option value="admin">Admin</option>
-              </select>
+        <!-- SCREENSHOTS TAB -->
+        <div v-if="adminTab === 'screenshots' && selectedUser">
+          <div class="section-block">
+            <h2>📸 Screenshots — {{ selectedUser.display_name }}</h2>
+            <div v-if="adminDrillLoading" class="empty-state"><p>Loading...</p></div>
+            <div v-else class="screenshots-grid">
+              <div v-for="shot in adminUserScreenshots" :key="shot.id" class="screenshot-card">
+                <img :src="convertFileSrc(shot.file_path)" alt="Screenshot" loading="lazy" />
+                <div class="screenshot-info">
+                  <span>{{ formatTimestamp(shot.captured_at) }}</span>
+                </div>
+              </div>
+              <div v-if="adminUserScreenshots.length === 0" class="empty-state" style="grid-column:1/-1;"><p>No screenshots for this date</p></div>
             </div>
-            <div v-if="createUserError" class="wizard-error" style="margin-top:12px;">{{ createUserError }}</div>
-            <div style="display:flex; gap:12px; margin-top:16px;">
-              <button class="btn-stop" style="flex:1;" @click="showCreateUser = false">Cancel</button>
-              <button class="btn-start" style="flex:2;" :disabled="createUserLoading" @click="doCreateUser">
-                {{ createUserLoading ? 'Creating...' : 'Create User' }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Users Table -->
-          <div class="app-table">
-            <div class="app-row header-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
-              <span>Name</span><span>Username</span><span>Role</span>
-            </div>
-            <div v-for="user in adminUsers" :key="user.id" class="app-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
-              <span class="app-name">{{ user.display_name }}</span>
-              <span class="url-text">{{ user.username }}</span>
-              <span>
-                <span :class="['role-badge', user.role === 'admin' ? 'role-admin' : 'role-emp']">{{ user.role }}</span>
-              </span>
-            </div>
-            <div v-if="adminUsers.length === 0" class="empty-state"><p>No team members yet</p></div>
           </div>
         </div>
+
+        <!-- TIME LOGS TAB -->
+        <div v-if="adminTab === 'timelogs' && selectedUser">
+          <div class="section-block">
+            <h2>⏱ Time Logs — {{ selectedUser.display_name }}</h2>
+            <div v-if="adminDrillLoading" class="empty-state"><p>Loading...</p></div>
+            <div v-else class="app-table">
+              <div class="app-row header-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
+                <span>App</span><span>Window</span><span>Start</span><span>End</span><span>Duration</span>
+              </div>
+              <div v-for="log in adminUserTimeLogs" :key="log.id" class="app-row" style="grid-template-columns: 2fr 3fr 1fr 1fr 1fr;">
+                <span class="app-name"><span class="app-icon">{{ appIcon(log.app_name) }}</span>{{ log.app_name }}</span>
+                <span class="url-text" :title="log.window_title">{{ log.window_title }}</span>
+                <span class="url-time">{{ formatTimestamp(log.start_time) }}</span>
+                <span class="url-time">{{ log.end_time ? formatTimestamp(log.end_time) : '-' }}</span>
+                <span :class="['app-time', log.status === 'idle' ? 'idle' : '']">
+                  {{ formatTime(log.duration) }}
+                  <span v-if="log.status === 'idle'" style="font-size:0.7rem; opacity:0.7;"> idle</span>
+                </span>
+              </div>
+              <div v-if="adminUserTimeLogs.length === 0" class="empty-state"><p>No time logs for this date</p></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACTIVITY TAB -->
+        <div v-if="adminTab === 'activity' && selectedUser">
+          <div class="section-block">
+            <h2>⌨️ Activity — {{ selectedUser.display_name }}</h2>
+            <small style="display:block; margin-bottom:12px; color:var(--text-muted);">
+              Keyboard &amp; mouse tracked individually. Idle = no input for {{ settings.idle_threshold }} min.
+            </small>
+            <div v-if="adminDrillLoading" class="empty-state"><p>Loading...</p></div>
+            <div v-else>
+              <!-- Keyboard / Mouse / Idle cards -->
+              <div style="display:grid; grid-template-columns: repeat(4,1fr); gap:12px; margin-bottom:16px;">
+                <div class="card premium-card" style="border-left: 3px solid var(--accent);">
+                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">⌨️ Keyboard Events</h3>
+                  <p style="font-size:2rem; font-weight:800; color:var(--accent); margin:4px 0;">{{ adminInputStats.keyboard_count.toLocaleString() }}</p>
+                  <small style="color:var(--text-muted);">keystrokes detected</small>
+                </div>
+                <div class="card premium-card" style="border-left: 3px solid var(--success);">
+                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">🖱 Mouse Events</h3>
+                  <p style="font-size:2rem; font-weight:800; color:var(--success); margin:4px 0;">{{ adminInputStats.mouse_count.toLocaleString() }}</p>
+                  <small style="color:var(--text-muted);">movements detected</small>
+                </div>
+                <div class="card premium-card" style="border-left: 3px solid var(--warning);">
+                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">😴 Idle Periods</h3>
+                  <p style="font-size:2rem; font-weight:800; color:var(--warning); margin:4px 0;">{{ adminInputStats.idle_start_count }}</p>
+                  <small style="color:var(--text-muted);">idle starts logged</small>
+                </div>
+                <div class="card premium-card" style="border-left: 3px solid var(--text-muted);">
+                  <h3 style="font-size:0.8rem; text-transform:uppercase; letter-spacing:.05em;">📋 Total Events</h3>
+                  <p style="font-size:2rem; font-weight:800; margin:4px 0;">{{ adminUserActivity.length.toLocaleString() }}</p>
+                  <small style="color:var(--text-muted);">raw log entries</small>
+                </div>
+              </div>
+              <!-- Raw event log -->
+              <div class="app-table">
+                <div class="app-row header-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+                  <span>Type</span><span>Time</span><span>Input</span><span>Status</span>
+                </div>
+                <div v-for="act in adminUserActivity" :key="act.id" class="app-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+                  <span class="app-name" style="display:flex; align-items:center; gap:6px;">
+                    <span v-if="act.event_type === 'keyboard'">⌨️</span>
+                    <span v-else-if="act.event_type === 'mouse'">🖱</span>
+                    <span v-else-if="act.event_type === 'idle_start'">😴</span>
+                    <span v-else-if="act.event_type === 'idle_end'">▶️</span>
+                    <span v-else>📌</span>
+                    {{ act.event_type }}
+                  </span>
+                  <span class="url-time">{{ formatTimestamp(act.timestamp) }}</span>
+                  <span style="font-size:0.8rem; font-weight:600;"
+                    :style="{ color: act.event_type==='keyboard' ? 'var(--accent)' : act.event_type==='mouse' ? 'var(--success)' : 'var(--text-muted)' }">
+                    {{ act.event_type === 'keyboard' ? 'KB' : act.event_type === 'mouse' ? 'Mouse' : '—' }}
+                  </span>
+                  <span :style="{ color: act.activity_status === 'idle' ? 'var(--warning)' : 'var(--success)', fontWeight: '600', fontSize: '0.8rem' }">
+                    {{ act.activity_status }}
+                  </span>
+                </div>
+                <div v-if="adminUserActivity.length === 0" class="empty-state"><p>No activity events for this date</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
     </main>
@@ -1840,4 +2011,41 @@ input[type="date"] {
   transition: all 0.2s ease;
 }
 .btn-danger:hover { filter: brightness(1.1); }
-</style>
+
+/* ─── Admin Tabs ─────────────────────────────────────────────────── */
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px 16px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.admin-tab {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.admin-tab:hover { background: var(--border-color); color: var(--text-color); }
+.admin-tab-active { background: var(--accent) !important; color: white !important; border-color: var(--accent) !important; }
+
+/* ─── Drill Action Buttons ───────────────────────────────────────── */
+.btn-drill {
+  background: var(--border-color);
+  border: none;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: var(--text-color);
+}
+.btn-drill:hover { background: var(--accent); color: white; transform: scale(1.08); }
+</style>

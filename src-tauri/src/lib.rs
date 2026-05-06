@@ -188,6 +188,54 @@ fn cmd_get_admin_stats(
     auth::get_admin_stats(&app_handle, &company_id)
 }
 
+// ─── Admin: Per-User Data Commands ──────────────────────────────────
+
+#[tauri::command]
+fn cmd_get_user_screenshots(
+    app_handle: tauri::AppHandle,
+    user_id: String,
+    from: String,
+    to: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<db::AdminScreenshotEntry>, String> {
+    db::get_user_screenshots(&app_handle, &user_id, &from, &to, limit, offset).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_user_time_logs(
+    app_handle: tauri::AppHandle,
+    user_id: String,
+    from: String,
+    to: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<db::AdminTimeLogEntry>, String> {
+    db::get_user_time_logs(&app_handle, &user_id, &from, &to, limit, offset).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_user_activity(
+    app_handle: tauri::AppHandle,
+    user_id: String,
+    from: String,
+    to: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<db::AdminActivityEntry>, String> {
+    db::get_user_activity(&app_handle, &user_id, &from, &to, limit, offset).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_user_input_stats(
+    app_handle: tauri::AppHandle,
+    user_id: String,
+    from: String,
+    to: String,
+) -> Result<db::UserInputStats, String> {
+    db::get_user_input_stats(&app_handle, &user_id, &from, &to).map_err(|e| e.to_string())
+}
+
 // ─── Tauri Setup ──────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -296,6 +344,11 @@ pub fn run() {
             cmd_get_company_users,
             cmd_create_user,
             cmd_get_admin_stats,
+            // Admin per-user
+            cmd_get_user_screenshots,
+            cmd_get_user_time_logs,
+            cmd_get_user_activity,
+            cmd_get_user_input_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
