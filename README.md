@@ -1,6 +1,6 @@
-# 🛡️ Time Guardian
+# 🛡️ Deskrona
 
-**Time Guardian** is a local-first, privacy-focused, cross-platform time tracking and productivity monitoring application. Built with **Tauri**, **Rust**, and **Vue 3**, it ensures all your data stays on your machine while providing a premium, high-performance experience.
+**Deskrona** is a local-first, privacy-focused, cross-platform time tracking and productivity monitoring application. Built with **Tauri**, **Rust**, and **Vue 3**, it ensures all your data stays on your machine while providing a premium, high-performance experience.
 
 ## 🚀 Key Features
 
@@ -32,11 +32,13 @@
 ### Installation
 
 1. Clone the repository:
+
    ```bash
-   git clone https://github.com/your-repo/worktracker.git
+   git clone https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software.git
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install
    ```

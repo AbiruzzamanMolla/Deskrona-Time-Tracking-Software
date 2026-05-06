@@ -343,7 +343,7 @@ pub fn run() {
                 let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
                 let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
                 let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-                
+
                 Menu::with_items(app, &[&status_item, &start_i, &pause_i, &stop_i, &quit_i])
             }
 
@@ -359,7 +359,7 @@ pub fn run() {
                 }
             });
 
-            let status_tooltip = format!("Time Guardian - Status: {}", tracking::get_tracking_status());
+            let status_tooltip = format!("Deskrona - Status: {}", tracking::get_tracking_status());
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())

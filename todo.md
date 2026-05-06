@@ -1,4 +1,4 @@
-# 📝 Project Todo List: Time Guardian
+# 📝 Project Todo List: Deskrona
 
 ## 🚀 Phase 1: MVP Setup (In Progress)
 
@@ -62,11 +62,11 @@
 
 ## 🔁 Phase 6: Synchronization & Polish
 
-- [ ] Prepare sync-ready schema refinements (Add `deleted_at` for soft deletes)
-- [ ] Resolve conflict logic for future cloud sync
+- [x] Prepare sync-ready schema refinements (Add `deleted_at` for soft deletes)
+- [x] Resolve conflict logic for future cloud sync
 - [x] Fix Screenshot view in ui issue.
 - [ ] Implement multi-platform permission handling (macOS Screen Recording/Accessibility)
-- [ ] Refine UI/UX for premium feel
+- [x] Refine UI/UX for premium feel
 
 ## 🔁 Phase 6.5: Taskbar Operations
 
@@ -91,6 +91,6 @@
 
 ## 🔐 Phase 9: Security & Privacy
 
-- [ ] Add Privacy Notice/In-app notification about tracking active state
+- [x] Add Privacy Notice/In-app notification about tracking active state
 - [ ] Implement OS-level permission request flows for macOS/Linux
 - [ ] Explore local database encryption for sensitive metadata (Optional)

@@ -113,6 +113,24 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
     let _ = conn.execute("ALTER TABLE settings ADD COLUMN idle_threshold INTEGER NOT NULL DEFAULT 5", []);
     let _ = conn.execute("ALTER TABLE settings ADD COLUMN is_screenshot_enabled INTEGER NOT NULL DEFAULT 1", []);
 
+    // Phase 6: Sync-ready schema - Add deleted_at for soft deletes
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN deleted_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN deleted_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN deleted_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE app_usage ADD COLUMN deleted_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE screenshots ADD COLUMN deleted_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE activity_events ADD COLUMN deleted_at TEXT", []);
+
+    // Sync metadata table for future cloud sync
+    let _ = conn.execute("CREATE TABLE IF NOT EXISTS sync_metadata (
+        id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        synced_at TEXT,
+        conflict_resolution TEXT
+    )", []);
+
     // Insert default settings if none exists
     conn.execute(
         "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, created_at, updated_at)

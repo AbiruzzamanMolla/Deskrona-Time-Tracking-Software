@@ -1,10 +1,27 @@
 # 📜 Changelog
 
-All notable changes to **Time Guardian** will be documented in this file.
+All notable changes to **Deskrona** will be documented in this file.
+
+## [0.0.5] - 2026-05-06
+
+### ✨ Added
+
+- **Tray Minimization**: App now hides to system tray when closing window instead of fully exiting.
+- **Tray Menu Status**: Right-click tray menu displays current tracking status and elapsed session time (e.g., "Status: running (01:23:45)").
+- **Sync-Ready Schema**: Added `deleted_at` columns to key tables (sessions, time_logs, app_usage, screenshots, activity_events) for future soft delete support.
+- **Sync Metadata Table**: New table to track sync operations and enable conflict resolution for future cloud sync.
+- **Premium UI Polish**: Added smooth transitions and refined visual elements throughout the application.
+- **Privacy Notice**: In-app privacy notification that informs users when tracking is active and what data is being collected.
+- **Update Notification**: Settings now shows update availability by checking GitHub releases, with download link for new versions.
+
+### 🐛 Fixed
+
+- **Single User Activity Tab**: Fixed activity tab showing empty in single user mode by using correct default user ID.
 
 ## [0.0.4] - 2026-05-06
 
 ### ✨ Added
+
 - **Enterprise Multi-User Architecture**: Completed Phase 8 roadmap, enabling the application to support team environments.
 - **Dual-Mode Support**: Introduced a "First Run" wizard to select between Single User (local) and Multi-User (enterprise) modes.
 - **Hierarchical Identity System**: Implemented a multi-tenant schema with Company, Admin, and Employee roles.
@@ -22,6 +39,7 @@ All notable changes to **Time Guardian** will be documented in this file.
 - **UI Tooltips**: Added hoverable tooltips for long URLs in the history and dashboard views.
 
 ### 🐛 Fixed
+
 - **Rust Compilation**: Resolved `DateTime<Local> - DateTime<Utc>` subtraction errors in the tracking thread.
 - **Browser History Display**: Fixed a rendering bug where history entries were not displaying due to missing unique keys.
 - **Screenshot Inconsistency**: Standardized screenshot timestamps to local time for correct alignment in administrative views.
@@ -34,6 +52,7 @@ All notable changes to **Time Guardian** will be documented in this file.
 ## [0.0.3] - 2026-05-05
 
 ### ✨ Added
+
 - **Software Mode Selection**: Choose between Personal and Enterprise modes on startup.
 - **Improved Taskbar Integration**: Real-time timer and status in the taskbar title.
 - **Automated Release Pipeline**: Support for 32-bit and 64-bit Windows installers.
@@ -41,6 +60,7 @@ All notable changes to **Time Guardian** will be documented in this file.
 ## [0.0.1] - 2026-05-05
 
 ### ✨ Added
+
 - Initial project scaffolding with Tauri, Rust, and Vue 3.
 - SQLite integration for local-first data storage.
 - **Advanced Monitoring**: Multi-monitor screenshot capture at user-defined intervals.
