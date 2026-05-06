@@ -34,3 +34,4 @@ screenshots/
 app.db
 .gemini/
 release.md
+.agents

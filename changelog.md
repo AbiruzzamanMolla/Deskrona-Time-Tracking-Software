@@ -2,6 +2,22 @@
 
 All notable changes to **Time Guardian** will be documented in this file.
 
+## [0.0.4-draft] - 2026-05-06
+
+### ✨ Added
+- **Enterprise Multi-User Architecture**: Completed Phase 8 roadmap, enabling the application to support team environments.
+- **Dual-Mode Support**: Introduced a "First Run" wizard to select between **Single User** (local) and **Multi-User** (enterprise) modes.
+- **Hierarchical Identity System**: Implemented a multi-tenant schema with Company, Admin, and Employee roles.
+- **Local Authentication**: Added a secure local login system with password hashing and session persistence.
+- **Admin Dashboard**: Created a dedicated, role-restricted dashboard for admins to manage team members and view productivity statistics.
+- **Data Isolation**: Updated the database engine to enforce strict data separation between users and companies.
+- **Settings Expansion**: Added global tracking configuration (activity intervals, idle timeouts) persisted at the tenant level.
+
+### 🐛 Fixed
+- **Screenshot Rendering**: Fixed long-standing issue with locally stored screenshots not displaying in the UI.
+- **Session Security**: Resolved a bug where administrative views remained accessible to employees after logout/login cycles.
+- **Logout Stability**: Fixed a ReferenceError in the logout sequence that prevented the application from returning to the login screen.
+
 ## [0.0.3] - 2026-05-05
 
 ### ✨ Added

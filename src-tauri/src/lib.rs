@@ -1,6 +1,8 @@
 mod db;
 mod tracking;
 mod backup;
+mod config;
+mod auth;
 
 use tauri_plugin_autostart::ManagerExt;
 use tauri::{
@@ -9,7 +11,8 @@ use tauri::{
     Emitter, Manager,
 };
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+// ─── Existing Commands ────────────────────────────────────────────
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -98,6 +101,95 @@ fn cmd_update_app_category(app_handle: tauri::AppHandle, app_name: String, categ
     db::update_app_category(&app_handle, &app_name, &category).map_err(|e| e.to_string())
 }
 
+// ─── Phase 8: App Config Commands ────────────────────────────────
+
+/// Returns the persisted app config (mode + setup_done flag).
+#[tauri::command]
+fn cmd_get_app_config(app_handle: tauri::AppHandle) -> config::AppConfig {
+    config::load_config(&app_handle)
+}
+
+/// Persists the app config. Called when the wizard completes.
+#[tauri::command]
+fn cmd_save_app_config(app_handle: tauri::AppHandle, cfg: config::AppConfig) -> Result<(), String> {
+    config::save_config(&app_handle, &cfg)
+}
+
+/// Reset app: delete config file + wipe auth tables. Frontend will re-run wizard.
+#[tauri::command]
+fn cmd_reset_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // 1. Delete config
+    config::delete_config(&app_handle)?;
+    // 2. Reset auth schema (drops + recreates tables)
+    auth::init_auth_schema(&app_handle).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ─── Phase 8: Auth Commands ───────────────────────────────────────
+
+/// First-time: register company + admin user.
+#[tauri::command]
+fn cmd_register_company(
+    app_handle: tauri::AppHandle,
+    payload: auth::RegisterCompanyPayload,
+) -> Result<auth::LoginResult, String> {
+    auth::register_company(&app_handle, payload)
+}
+
+/// Login with username + password.
+#[tauri::command]
+fn cmd_login(
+    app_handle: tauri::AppHandle,
+    payload: auth::LoginPayload,
+) -> Result<auth::LoginResult, String> {
+    auth::login(&app_handle, payload)
+}
+
+/// Validate session token, returns current user.
+#[tauri::command]
+fn cmd_validate_session(
+    app_handle: tauri::AppHandle,
+    token: String,
+) -> Result<auth::AuthUser, String> {
+    auth::validate_session(&app_handle, &token)
+}
+
+/// Logout / invalidate token.
+#[tauri::command]
+fn cmd_logout(app_handle: tauri::AppHandle, token: String) -> Result<(), String> {
+    auth::logout(&app_handle, &token)
+}
+
+/// Admin: list all users in company.
+#[tauri::command]
+fn cmd_get_company_users(
+    app_handle: tauri::AppHandle,
+    company_id: String,
+) -> Result<Vec<auth::AuthUser>, String> {
+    auth::get_company_users(&app_handle, &company_id)
+}
+
+/// Admin: create a new user under this company.
+#[tauri::command]
+fn cmd_create_user(
+    app_handle: tauri::AppHandle,
+    company_id: String,
+    payload: auth::CreateUserPayload,
+) -> Result<auth::AuthUser, String> {
+    auth::create_user(&app_handle, &company_id, payload)
+}
+
+/// Admin: aggregated productivity stats.
+#[tauri::command]
+fn cmd_get_admin_stats(
+    app_handle: tauri::AppHandle,
+    company_id: String,
+) -> Result<Vec<auth::UserProductivityStat>, String> {
+    auth::get_admin_stats(&app_handle, &company_id)
+}
+
+// ─── Tauri Setup ──────────────────────────────────────────────────
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -107,6 +199,9 @@ pub fn run() {
         .setup(|app| {
             // Initialize database
             db::init_db(app.handle()).expect("Failed to initialize database");
+
+            // Initialize auth schema (idempotent)
+            auth::init_auth_schema(app.handle()).expect("Failed to initialize auth schema");
 
             // Sync autostart state from settings
             if let Ok(settings) = db::get_settings(app.handle()) {
@@ -189,7 +284,18 @@ pub fn run() {
             cmd_get_screenshot_dir,
             cmd_update_app_category,
             backup::cmd_export_db,
-            backup::cmd_import_db
+            backup::cmd_import_db,
+            // Phase 8
+            cmd_get_app_config,
+            cmd_save_app_config,
+            cmd_reset_app,
+            cmd_register_company,
+            cmd_login,
+            cmd_validate_session,
+            cmd_logout,
+            cmd_get_company_users,
+            cmd_create_user,
+            cmd_get_admin_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -14,6 +14,23 @@ use screenshots::Screen;
 // Tracking states: 0 = stopped, 1 = running, 2 = paused
 pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // Start as running by default
 
+pub static ACTIVE_USER_ID: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn set_active_user_id(user_id: Option<String>) {
+    if let Ok(mut guard) = ACTIVE_USER_ID.lock() {
+        *guard = user_id;
+    }
+}
+
+pub fn get_active_user_id() -> String {
+    if let Ok(guard) = ACTIVE_USER_ID.lock() {
+        if let Some(id) = &*guard {
+            return id.clone();
+        }
+    }
+    "default_user".to_string()
+}
+
 pub fn get_tracking_status() -> &'static str {
     match TRACKING_STATE.load(Ordering::SeqCst) {
         0 => "stopped",
@@ -66,7 +83,7 @@ pub fn start_tracking(app: AppHandle) {
     // --- Screenshot Thread ---
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        let mut last_screenshot_time = Instant::now() - Duration::from_secs(86400); // Trigger immediately
+    let mut last_screenshot_time: Option<Instant> = None; // None = trigger immediately on first loop
 
         loop {
             std::thread::sleep(Duration::from_secs(5));
@@ -76,8 +93,12 @@ pub fn start_tracking(app: AppHandle) {
             }
 
             let interval_secs = crate::db::get_screenshot_interval_secs(&app_clone);
-            if last_screenshot_time.elapsed().as_secs() >= interval_secs {
-                last_screenshot_time = Instant::now();
+            let should_capture = match last_screenshot_time {
+                None => true,
+                Some(t) => t.elapsed().as_secs() >= interval_secs,
+            };
+            if should_capture {
+                last_screenshot_time = Some(Instant::now());
                 
                 let dir = crate::db::get_screenshot_dir(&app_clone);
                 let now_str = Utc::now().format("%Y%m%d_%H%M%S").to_string();
@@ -124,7 +145,7 @@ pub fn start_tracking(app: AppHandle) {
                                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                                 (
                                     Uuid::new_v4().to_string(),
-                                    "default_user",
+                                    get_active_user_id(),
                                     &cw.app_name,
                                     &cw.window_title,
                                     &cw.start_time.to_rfc3339(),
@@ -220,7 +241,7 @@ pub fn start_tracking(app: AppHandle) {
                                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                                         (
                                             Uuid::new_v4().to_string(),
-                                            "default_user",
+                                            get_active_user_id(),
                                             &cw.app_name,
                                             &cw.window_title,
                                             &cw.start_time.to_rfc3339(),

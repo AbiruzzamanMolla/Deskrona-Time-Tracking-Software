@@ -71,6 +71,41 @@ interface ScreenshotEntry {
   captured_at: string;
 }
 
+// ─── Phase 8 Interfaces ───────────────────────────────────────────
+interface AppConfig {
+  mode: 'single_user' | 'multi_user';
+  setup_done: boolean;
+}
+
+interface AuthUser {
+  id: string;
+  company_id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  created_at: string;
+}
+
+interface LoginResult {
+  token: string;
+  user: AuthUser;
+}
+
+interface UserProductivityStat {
+  user_id: string;
+  display_name: string;
+  username: string;
+  total_active_seconds: number;
+  session_count: number;
+}
+
+interface CreateUserPayload {
+  username: string;
+  display_name: string;
+  password: string;
+  role: string;
+}
+
 const settings = ref<Settings>({
   language: "en",
   theme: "system",
@@ -94,6 +129,43 @@ let refreshInterval: ReturnType<typeof setInterval> | null = null;
 let taskbarInterval: ReturnType<typeof setInterval> | null = null;
 const trackingStatus = ref<string>('running');
 const defaultScreenshotDir = ref<string>('');
+
+// ─── Phase 8 State ────────────────────────────────────────────────
+const appConfig = ref<AppConfig>({ mode: 'single_user', setup_done: false });
+const appScreen = ref<'loading' | 'wizard' | 'login' | 'app'>('loading');
+const currentUser = ref<AuthUser | null>(null);
+const sessionToken = ref<string>('');
+
+// Wizard state
+const wizardStep = ref(1);
+const wizardMode = ref<'single_user' | 'multi_user'>('single_user');
+const wizardCompanyName = ref('');
+const wizardAdminUsername = ref('');
+const wizardAdminDisplay = ref('');
+const wizardAdminPassword = ref('');
+const wizardConfirmPassword = ref('');
+const wizardError = ref('');
+const wizardLoading = ref(false);
+
+// Login state
+const loginUsername = ref('');
+const loginPassword = ref('');
+const loginError = ref('');
+const loginLoading = ref(false);
+
+// Admin state
+const adminUsers = ref<AuthUser[]>([]);
+const adminStats = ref<UserProductivityStat[]>([]);
+const showCreateUser = ref(false);
+const newUser = ref<CreateUserPayload>({ username: '', display_name: '', password: '', role: 'employee' });
+const createUserError = ref('');
+const createUserLoading = ref(false);
+
+const isAdmin = computed(() => currentUser.value?.role === 'admin');
+const isMultiUser = computed(() => appConfig.value.mode === 'multi_user');
+
+// Settings mode change pending state
+const pendingMode = ref<'single_user' | 'multi_user'>('single_user');
 
 // Accumulated paused seconds — updated each time we enter/leave pause state
 const pausedSeconds = ref(0);
@@ -367,37 +439,35 @@ watch(settings, async (newVal, oldVal) => {
 
 
 
-onMounted(async () => {
+// App init — runs once when appScreen transitions to 'app'
+let appInitDone = false;
+const initApp = async () => {
+  if (appInitDone) return;
+  appInitDone = true;
   await loadSettings();
   defaultScreenshotDir.value = await invoke("cmd_get_screenshot_dir");
   await loadActiveSession();
   await loadTrackingStatus();
   await refreshDashboard();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
-  
   refreshInterval = setInterval(refreshDashboard, 5000) as unknown as number;
-  
   taskbarInterval = setInterval(() => {
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const status = trackingStatus.value;
-
     if (activeSession.value && status === 'running') {
       const start = new Date(activeSession.value.start_time);
       const totalElapsed = Math.floor((now.getTime() - start.getTime()) / 1000);
       const netActive = Math.max(0, totalElapsed - pausedSeconds.value);
-      const activeStr = formatTime(netActive);
-      document.title = `▶ ${activeStr} | ${timeStr} — Time Guardian`;
+      document.title = `▶ ${formatTime(netActive)} | ${timeStr} — Time Guardian`;
     } else if (status === 'paused') {
       document.title = `⏸ Paused | ${timeStr} — Time Guardian`;
     } else {
       document.title = `⏹ Stopped | ${timeStr} — Time Guardian`;
     }
   }, 1000) as unknown as number;
-
   await listen<string>("tracking-status-changed", (event) => {
     const newStatus = event.payload;
-    // Sync pause accumulator for tray icon actions
     if (newStatus === 'paused' && trackingStatus.value !== 'paused') {
       pauseStartedAt = Date.now();
     } else if (newStatus === 'running' && trackingStatus.value === 'paused' && pauseStartedAt !== null) {
@@ -409,21 +479,307 @@ onMounted(async () => {
     }
     trackingStatus.value = newStatus;
   });
-});
+};
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval);
   if (taskbarInterval) clearInterval(taskbarInterval);
 });
+
+// ─── Phase 8 Logic ────────────────────────────────────────────────
+
+const loadAppConfig = async () => {
+  const cfg = await invoke<AppConfig>('cmd_get_app_config');
+  appConfig.value = cfg;
+  return cfg;
+};
+
+const saveAppConfig = async (cfg: AppConfig) => {
+  await invoke('cmd_save_app_config', { cfg });
+  appConfig.value = cfg;
+};
+
+const tryRestoreSession = async () => {
+  const token = localStorage.getItem('tg_session_token');
+  if (!token) return false;
+  try {
+    const user = await invoke<AuthUser>('cmd_validate_session', { token });
+    currentUser.value = user;
+    sessionToken.value = token;
+    return true;
+  } catch {
+    localStorage.removeItem('tg_session_token');
+    return false;
+  }
+};
+
+const doLogin = async () => {
+  loginError.value = '';
+  loginLoading.value = true;
+  try {
+    const result = await invoke<LoginResult>('cmd_login', {
+      payload: { username: loginUsername.value.trim(), password: loginPassword.value }
+    });
+    currentUser.value = result.user;
+    sessionToken.value = result.token;
+    localStorage.setItem('tg_session_token', result.token);
+    appScreen.value = 'app';
+  } catch (e: any) {
+    loginError.value = e?.toString() ?? 'Login failed';
+  } finally {
+    loginLoading.value = false;
+  }
+};
+
+const doLogout = async () => {
+  if (sessionToken.value) {
+    try { await invoke('cmd_logout', { token: sessionToken.value }); } catch {}
+    localStorage.removeItem('tg_session_token');
+  }
+  currentUser.value = null;
+  sessionToken.value = '';
+  currentView.value = 'dashboard';
+  appScreen.value = 'login';
+};
+
+const wizardValidateStep2 = () => {
+  wizardError.value = '';
+  if (!wizardCompanyName.value.trim()) { wizardError.value = 'Company name required'; return; }
+  if (!wizardAdminUsername.value.trim()) { wizardError.value = 'Admin username required'; return; }
+  if (!wizardAdminDisplay.value.trim()) { wizardError.value = 'Admin display name required'; return; }
+  if (wizardAdminPassword.value.length < 6) { wizardError.value = 'Password must be 6+ characters'; return; }
+  if (wizardAdminPassword.value !== wizardConfirmPassword.value) { wizardError.value = 'Passwords do not match'; return; }
+  wizardStep.value = 3;
+};
+
+const wizardFinish = async () => {
+  wizardError.value = '';
+  wizardLoading.value = true;
+  try {
+    if (wizardMode.value === 'multi_user') {
+      const result = await invoke<LoginResult>('cmd_register_company', {
+        payload: {
+          company_name: wizardCompanyName.value.trim(),
+          admin_username: wizardAdminUsername.value.trim(),
+          admin_display_name: wizardAdminDisplay.value.trim(),
+          admin_password: wizardAdminPassword.value,
+        }
+      });
+      currentUser.value = result.user;
+      sessionToken.value = result.token;
+      localStorage.setItem('tg_session_token', result.token);
+    }
+    const cfg: AppConfig = { mode: wizardMode.value, setup_done: true };
+    await saveAppConfig(cfg);
+    appScreen.value = wizardMode.value === 'single_user' ? 'app' : 'app';
+  } catch (e: any) {
+    wizardError.value = e?.toString() ?? 'Setup failed';
+  } finally {
+    wizardLoading.value = false;
+  }
+};
+
+const loadAdminData = async () => {
+  if (!isAdmin.value || !currentUser.value) return;
+  try {
+    const [users, stats] = await Promise.all([
+      invoke<AuthUser[]>('cmd_get_company_users', { companyId: currentUser.value.company_id }),
+      invoke<UserProductivityStat[]>('cmd_get_admin_stats', { companyId: currentUser.value.company_id }),
+    ]);
+    adminUsers.value = users;
+    adminStats.value = stats;
+  } catch (e) { console.error('Failed to load admin data', e); }
+};
+
+const doCreateUser = async () => {
+  createUserError.value = '';
+  createUserLoading.value = true;
+  try {
+    const created = await invoke<AuthUser>('cmd_create_user', {
+      companyId: currentUser.value?.company_id,
+      payload: newUser.value,
+    });
+    adminUsers.value.push(created);
+    newUser.value = { username: '', display_name: '', password: '', role: 'employee' };
+    showCreateUser.value = false;
+  } catch (e: any) {
+    createUserError.value = e?.toString() ?? 'Failed';
+  } finally {
+    createUserLoading.value = false;
+  }
+};
+
+// Boot sequence
+onMounted(async () => {
+  // Apply stored theme BEFORE showing any screen (avoids flash)
+  try {
+    const s = await invoke<Settings>('get_settings');
+    settings.value = s;
+    locale.value = s.language;
+    applyTheme();
+  } catch {}
+
+  const cfg = await loadAppConfig();
+  pendingMode.value = cfg.mode;
+  if (!cfg.setup_done) {
+    appScreen.value = 'wizard';
+  } else if (cfg.mode === 'multi_user') {
+    const restored = await tryRestoreSession();
+    appScreen.value = restored ? 'app' : 'login';
+  } else {
+    appScreen.value = 'app';
+  }
+});
+
+watch(appScreen, (s) => {
+  if (s === 'app') initApp();
+});
+
+watch(currentView, (v) => {
+  if (v === 'admin') loadAdminData();
+});
+
+const doResetApp = async () => {
+  if (!confirm(t('message.resetAppConfirm'))) return;
+  try {
+    await invoke('cmd_reset_app');
+    localStorage.removeItem('tg_session_token');
+    currentUser.value = null;
+    sessionToken.value = '';
+    appConfig.value = { mode: 'single_user', setup_done: false };
+    wizardStep.value = 1;
+    wizardMode.value = 'single_user';
+    wizardCompanyName.value = '';
+    wizardAdminUsername.value = '';
+    wizardAdminDisplay.value = '';
+    wizardAdminPassword.value = '';
+    wizardConfirmPassword.value = '';
+    wizardError.value = '';
+    pendingMode.value = 'single_user';
+    appScreen.value = 'wizard';
+  } catch (e: any) {
+    alert('Reset failed: ' + (e?.toString() ?? 'unknown error'));
+  }
+};
+
+const doChangeMode = async () => {
+  if (!appConfig.value) return;
+  const newCfg: AppConfig = { ...appConfig.value, mode: pendingMode.value };
+  // If switching to multi_user and not set up yet — run wizard
+  if (pendingMode.value === 'multi_user') {
+    await doResetApp();
+    return;
+  }
+  // Single user: just save config, logout if needed
+  await saveAppConfig(newCfg);
+  if (currentUser.value) {
+    await doLogout();
+  }
+};
 </script>
 
 <template>
-  <div class="app-layout">
+  <!-- Loading -->
+  <div v-if="appScreen === 'loading'" class="fullscreen-center">
+    <div class="spinner"></div>
+    <p class="loading-text">Loading Time Guardian...</p>
+  </div>
+
+  <!-- First-Run Wizard -->
+  <div v-else-if="appScreen === 'wizard'" class="fullscreen-center wizard-bg">
+    <div class="wizard-card">
+      <div class="wizard-logo">
+        <img src="/favicon.png" width="52" height="52" />
+        <h1>{{ t('message.wizardWelcome') }}</h1>
+        <p>{{ t('message.wizardSubtitle') }}</p>
+      </div>
+
+      <!-- Step 1: Mode -->
+      <div v-if="wizardStep === 1" class="wizard-step">
+        <h2>{{ t('message.wizardChooseMode') }}</h2>
+        <div class="mode-cards">
+          <div :class="['mode-card', { 'mode-card-active': wizardMode === 'single_user' }]" @click="wizardMode = 'single_user'">
+            <span class="mode-icon">👤</span>
+            <strong>{{ t('message.modeSingleUser') }}</strong>
+            <p>{{ t('message.wizardSingleDesc') }}</p>
+          </div>
+          <div :class="['mode-card', { 'mode-card-active': wizardMode === 'multi_user' }]" @click="wizardMode = 'multi_user'">
+            <span class="mode-icon">🏢</span>
+            <strong>{{ t('message.modeMultiUser') }}</strong>
+            <p>{{ t('message.wizardTeamDesc') }}</p>
+          </div>
+        </div>
+        <button class="btn-wizard-next" @click="wizardStep = wizardMode === 'single_user' ? 3 : 2">{{ t('message.wizardContinue') }}</button>
+      </div>
+
+      <!-- Step 2: Company + Admin setup (multi_user only) -->
+      <div v-if="wizardStep === 2" class="wizard-step">
+        <h2>{{ t('message.wizardSetupCompany') }}</h2>
+        <div class="wizard-form">
+          <label>{{ t('message.wizardCompanyName') }}</label>
+          <input type="text" v-model="wizardCompanyName" :placeholder="t('message.wizardCompanyName')" />
+          <label>{{ t('message.wizardAdminUsername') }}</label>
+          <input type="text" v-model="wizardAdminUsername" placeholder="admin" />
+          <label>{{ t('message.wizardAdminDisplay') }}</label>
+          <input type="text" v-model="wizardAdminDisplay" placeholder="John Doe" />
+          <label>{{ t('message.wizardAdminPassword') }}</label>
+          <input type="password" v-model="wizardAdminPassword" :placeholder="t('message.wizardAdminPassword')" />
+          <label>{{ t('message.wizardConfirmPassword') }}</label>
+          <input type="password" v-model="wizardConfirmPassword" :placeholder="t('message.wizardConfirmPassword')" />
+        </div>
+        <div v-if="wizardError" class="wizard-error">{{ wizardError }}</div>
+        <div class="wizard-actions">
+          <button class="btn-wizard-back" @click="wizardStep = 1; wizardError = ''">{{ t('message.wizardBack') }}</button>
+          <button class="btn-wizard-next" :disabled="wizardLoading" @click="wizardValidateStep2">{{ t('message.wizardNext') }}</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Confirm -->
+      <div v-if="wizardStep === 3" class="wizard-step">
+        <h2>{{ t('message.wizardAllSet') }}</h2>
+        <div class="confirm-summary">
+          <div class="confirm-row"><span>{{ t('message.wizardMode') }}</span><strong>{{ wizardMode === 'single_user' ? t('message.modeSingleUser') : t('message.modeMultiUser') }}</strong></div>
+          <div v-if="wizardMode === 'multi_user'" class="confirm-row"><span>{{ t('message.wizardCompany') }}</span><strong>{{ wizardCompanyName }}</strong></div>
+          <div v-if="wizardMode === 'multi_user'" class="confirm-row"><span>{{ t('message.wizardAdmin') }}</span><strong>{{ wizardAdminUsername }}</strong></div>
+        </div>
+        <div v-if="wizardError" class="wizard-error">{{ wizardError }}</div>
+        <div class="wizard-actions">
+          <button class="btn-wizard-back" @click="wizardStep = wizardMode === 'single_user' ? 1 : 2; wizardError = ''">{{ t('message.wizardBack') }}</button>
+          <button class="btn-wizard-next" :disabled="wizardLoading" @click="wizardFinish">{{ wizardLoading ? t('message.wizardLaunching') : t('message.wizardLaunch') }}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Login Screen (Multi-User mode) -->
+  <div v-else-if="appScreen === 'login'" class="fullscreen-center login-bg">
+    <div class="login-card">
+      <div class="login-logo">
+        <img src="/favicon.png" width="52" height="52" />
+        <h1>{{ t('message.loginTitle') }}</h1>
+        <p>{{ t('message.loginSubtitle') }}</p>
+      </div>
+      <div class="login-form">
+        <label>{{ t('message.loginUsername') }}</label>
+        <input type="text" v-model="loginUsername" :placeholder="t('message.loginUsername')" @keyup.enter="doLogin" />
+        <label>{{ t('message.loginPassword') }}</label>
+        <input type="password" v-model="loginPassword" placeholder="••••••••" @keyup.enter="doLogin" />
+        <div v-if="loginError" class="login-error">{{ loginError }}</div>
+        <button class="btn-login" :disabled="loginLoading" @click="doLogin">
+          {{ loginLoading ? t('message.loginSigningIn') : t('message.loginSignIn') }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div v-else-if="appScreen === 'app'" class="app-layout">
     <aside class="sidebar">
       <div class="logo">
         <img src="/favicon.png" alt="Time Guardian" width="40" height="40" />
         <h2>Time Guardian</h2>
       </div>
+
       <nav>
         <button :class="{ active: currentView === 'dashboard' }" @click="currentView = 'dashboard'">
           📊 {{ t('message.dashboard') }}
@@ -439,6 +795,10 @@ onUnmounted(() => {
         </button>
         <button :class="{ active: currentView === 'screenshots' }" @click="currentView = 'screenshots'">
           📸 {{ t('message.screenshots') }}
+        </button>
+        <!-- Admin Dashboard — only visible to admins in multi-user mode -->
+        <button v-if="isMultiUser && isAdmin" :class="{ active: currentView === 'admin' }" @click="currentView = 'admin'">
+          🛡️ Admin
         </button>
         <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
           ⚙️ {{ t('message.settings') }}
@@ -485,13 +845,30 @@ onUnmounted(() => {
           <button class="btn-start" @click="startSession">▶ {{ t('message.startSession') }}</button>
         </div>
       </div>
+      
+      <div style="flex: 1;"></div> <!-- spacer -->
+
+      <!-- User badge + logout (multi-user only) -->
+      <div v-if="isMultiUser && currentUser" class="user-badge">
+        <span class="user-avatar">{{ currentUser.display_name.charAt(0).toUpperCase() }}</span>
+        <div class="user-info">
+          <span class="user-name">{{ currentUser.display_name }}</span>
+          <span :class="['role-badge', currentUser.role === 'admin' ? 'role-admin' : 'role-emp']">{{ currentUser.role }}</span>
+        </div>
+        <button class="btn-logout" @click="doLogout" title="Sign out">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+        </button>
+      </div>
     </aside>
 
     <main class="main-content">
       <!-- DASHBOARD VIEW -->
       <div v-if="currentView === 'dashboard'" class="view-dashboard">
-        <header>
+        <header class="view-header">
           <h1>{{ t('message.todaySummary') }}</h1>
+          <button class="btn-browse" @click="refreshDashboard" style="padding: 6px 12px; font-size:0.9rem;">
+            🔄 Refresh
+          </button>
         </header>
 
         <div class="summary-cards">
@@ -563,6 +940,9 @@ onUnmounted(() => {
         <header class="view-header">
           <h1>{{ t('message.trackings') }}</h1>
           <div class="filter-controls">
+            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">
+              🔄 Refresh
+            </button>
             <select v-model="filterType">
               <option value="daily">{{ t('message.filterDaily') }}</option>
               <option value="weekly">{{ t('message.filterWeekly') }}</option>
@@ -610,6 +990,9 @@ onUnmounted(() => {
         <header class="view-header">
           <h1>{{ t('message.urls') }}</h1>
           <div class="filter-controls">
+            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">
+              🔄 Refresh
+            </button>
             <select v-model="filterType">
               <option value="daily">{{ t('message.filterDaily') }}</option>
               <option value="weekly">{{ t('message.filterWeekly') }}</option>
@@ -644,6 +1027,9 @@ onUnmounted(() => {
         <header class="view-header">
           <h1>{{ t('message.screenshots') }}</h1>
           <div class="filter-controls">
+            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size:0.9rem;">
+              🔄 Refresh
+            </button>
             <select v-model="filterType">
               <option value="daily">{{ t('message.filterDaily') }}</option>
               <option value="weekly">{{ t('message.filterWeekly') }}</option>
@@ -718,6 +1104,7 @@ onUnmounted(() => {
       </div>
 
       <!-- SETTINGS VIEW -->
+      <!-- SETTINGS VIEW -->
       <div v-if="currentView === 'settings'" class="view-settings">
         <header>
           <h1>{{ t('message.settings') }}</h1>
@@ -776,8 +1163,106 @@ onUnmounted(() => {
             <label>{{ t('message.importData') }}</label>
             <button class="btn-browse" style="width:100%; padding: 8px; margin-top: 8px;" @click="importData">{{ t('message.importData') }}</button>
           </div>
+
+          <!-- App Mode -->
+          <div class="card setting-card setting-card-wide">
+            <label>{{ t('message.appMode') }}</label>
+            <div class="mode-toggle-row">
+              <span class="mode-current-badge" :class="appConfig?.mode === 'multi_user' ? 'mode-badge-multi' : 'mode-badge-single'">
+                {{ appConfig?.mode === 'multi_user' ? t('message.modeMultiUser') : t('message.modeSingleUser') }}
+              </span>
+              <select v-model="pendingMode" class="mode-select">
+                <option value="single_user">{{ t('message.modeSingleUser') }}</option>
+                <option value="multi_user">{{ t('message.modeMultiUser') }}</option>
+              </select>
+              <button class="btn-change-mode" @click="doChangeMode" :disabled="pendingMode === appConfig?.mode">{{ t('message.changeMode') }}</button>
+            </div>
+          </div>
+
+          <!-- Danger Zone -->
+          <div class="card setting-card setting-card-wide danger-card">
+            <label class="danger-label">⚠️ {{ t('message.dangerZone') }}</label>
+            <p class="danger-desc">{{ t('message.resetAppConfirm') }}</p>
+            <button class="btn-danger" @click="doResetApp">{{ t('message.resetApp') }}</button>
+          </div>
         </div>
       </div>
+
+      <!-- ADMIN DASHBOARD VIEW -->
+      <div v-if="currentView === 'admin'" class="view-admin">
+        <header class="view-header">
+          <h1>🛡️ Admin Dashboard</h1>
+          <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size:0.9rem;">
+            🔄 Refresh
+          </button>
+        </header>
+
+        <!-- Productivity Stats Table -->
+        <div class="section-block">
+          <h2>Today's Team Productivity</h2>
+          <div class="app-table">
+            <div class="app-row header-row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
+              <span>Employee</span><span>Active Time</span><span>Sessions</span><span>Username</span>
+            </div>
+            <div v-for="stat in adminStats" :key="stat.user_id" class="app-row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
+              <span class="app-name">👤 {{ stat.display_name }}</span>
+              <span class="app-time">{{ formatTime(stat.total_active_seconds) }}</span>
+              <span class="app-switches">{{ stat.session_count }}</span>
+              <span class="app-time" style="font-size:0.85rem; color: var(--text-muted);">{{ stat.username }}</span>
+            </div>
+            <div v-if="adminStats.length === 0" class="empty-state"><p>No data today</p></div>
+          </div>
+        </div>
+
+        <!-- User Management -->
+        <div class="section-block">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2>Team Members</h2>
+            <button class="btn-browse" @click="showCreateUser = !showCreateUser" style="padding: 8px 16px; font-size:0.9rem;">+ Add User</button>
+          </div>
+
+          <!-- Create User Form -->
+          <div v-if="showCreateUser" class="card" style="margin-bottom: 20px; padding: 24px;">
+            <h3 style="margin-bottom:16px;">New Team Member</h3>
+            <div class="wizard-form">
+              <label>Username</label>
+              <input type="text" v-model="newUser.username" placeholder="jane_doe" />
+              <label>Display Name</label>
+              <input type="text" v-model="newUser.display_name" placeholder="Jane Doe" />
+              <label>Password</label>
+              <input type="password" v-model="newUser.password" placeholder="Temporary password" />
+              <label>Role</label>
+              <select v-model="newUser.role">
+                <option value="employee">Employee</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div v-if="createUserError" class="wizard-error" style="margin-top:12px;">{{ createUserError }}</div>
+            <div style="display:flex; gap:12px; margin-top:16px;">
+              <button class="btn-stop" style="flex:1;" @click="showCreateUser = false">Cancel</button>
+              <button class="btn-start" style="flex:2;" :disabled="createUserLoading" @click="doCreateUser">
+                {{ createUserLoading ? 'Creating...' : 'Create User' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Users Table -->
+          <div class="app-table">
+            <div class="app-row header-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
+              <span>Name</span><span>Username</span><span>Role</span>
+            </div>
+            <div v-for="user in adminUsers" :key="user.id" class="app-row" style="grid-template-columns: 2fr 1.5fr 1fr;">
+              <span class="app-name">{{ user.display_name }}</span>
+              <span class="url-text">{{ user.username }}</span>
+              <span>
+                <span :class="['role-badge', user.role === 'admin' ? 'role-admin' : 'role-emp']">{{ user.role }}</span>
+              </span>
+            </div>
+            <div v-if="adminUsers.length === 0" class="empty-state"><p>No team members yet</p></div>
+          </div>
+        </div>
+      </div>
+
     </main>
   </div>
 </template>
@@ -801,18 +1286,18 @@ onUnmounted(() => {
 }
 
 :root.dark {
-  --bg-color: #0f1115;
-  --sidebar-bg: #16181d;
-  --text-color: #f1f5f9;
+  --bg-color: #09090b;
+  --sidebar-bg: #13141a;
+  --text-color: #f8fafc;
   --text-muted: #94a3b8;
-  --card-bg: #1e2128;
-  --border-color: #2a2e37;
+  --card-bg: #13141a;
+  --border-color: #272a35;
   --accent: #6366f1;
   --accent-hover: #818cf8;
-  --success: #34d399;
-  --danger: #f87171;
-  --warning: #fbbf24;
-  --bar-bg: #2a2e37;
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --bar-bg: #272a35;
 }
 
 * { box-sizing: border-box; margin: 0; }
@@ -824,6 +1309,21 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   transition: background-color 0.3s, color 0.3s;
 }
+
+/* ─── Slim Modern Scrollbar ─────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 999px;
+  transition: background 0.2s;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+*::-webkit-scrollbar-corner { background: transparent; }
 
 .app-layout { display: flex; height: 100vh; }
 
@@ -866,9 +1366,7 @@ nav button.active { background: var(--accent); color: white; }
 
 /* Session Control */
 .session-control {
-  margin-top: auto;
-  padding: 16px;
-  border-top: 1px solid var(--border-color);
+  margin: 0 16px 24px;
 }
 .session-active {
   display: flex;
@@ -1029,7 +1527,7 @@ header h1 { margin-top: 0; margin-bottom: 24px; font-size: 1.8rem; font-weight: 
 .setting-card { display: flex; flex-direction: column; gap: 12px; }
 .setting-card label { font-weight: 600; font-size: 0.95rem; }
 
-select, input[type="text"], input[type="number"] {
+select, input[type="text"], input[type="password"], input[type="number"] {
   width: 100%;
   padding: 10px;
   border-radius: 8px;
@@ -1039,10 +1537,10 @@ select, input[type="text"], input[type="number"] {
   font-size: 1rem;
   transition: all 0.2s ease;
 }
-select:focus, input:focus {
+select:focus, input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 input[type="checkbox"] { width: 24px; height: 24px; accent-color: var(--accent); cursor: pointer; }
 
@@ -1059,13 +1557,15 @@ input[type="checkbox"] { width: 24px; height: 24px; accent-color: var(--accent);
   align-items: center;
   justify-content: center;
   font-size: 1.2rem;
+  color: var(--text-color);
 }
 .btn-browse:hover { background: var(--border-color); }
 
 /* ─── Tracking Control ─────────────────────────────────────────── */
 .tracking-control {
-  padding: 16px;
-  border-top: 1px solid var(--border-color);
+  margin: 24px 16px 16px;
+  padding: 16px; background: var(--bg-color);
+  border-radius: 12px;
 }
 .tracking-status {
   display: flex;
@@ -1156,4 +1656,188 @@ input[type="date"] {
   color: var(--text-muted);
   text-align: center;
 }
+
+/* ─── Phase 8: Fullscreen Screens ──────────────────────────────── */
+.fullscreen-center {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: var(--bg-color);
+  z-index: 999;
+}
+.loading-text { color: var(--text-muted); margin-top: 16px; font-size: 0.95rem; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Wizard ────────────────────────────────────────────────────── */
+.wizard-bg { background: linear-gradient(135deg, #0f1115 0%, #1a1040 100%); }
+.wizard-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 48px 40px;
+  width: 100%; max-width: 560px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  animation: fadeIn 0.4s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+.wizard-logo { text-align: center; margin-bottom: 32px; }
+.wizard-logo h1 { font-size: 1.6rem; font-weight: 800; margin: 12px 0 4px; }
+.wizard-logo p { color: var(--text-muted); }
+.wizard-logo img { border-radius: 12px; }
+
+.wizard-step h2 { font-size: 1.2rem; font-weight: 700; margin-bottom: 20px; }
+
+.mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+.mode-card {
+  border: 2px solid var(--border-color);
+  border-radius: 12px; padding: 20px 16px;
+  cursor: pointer; text-align: center;
+  transition: all 0.2s ease;
+}
+.mode-card:hover { border-color: var(--accent); background: rgba(99,102,241,0.05); }
+.mode-card-active { border-color: var(--accent) !important; background: rgba(99,102,241,0.1) !important; }
+.mode-icon { font-size: 2rem; display: block; margin-bottom: 8px; }
+.mode-card strong { font-size: 1rem; display: block; margin-bottom: 6px; }
+.mode-card p { font-size: 0.82rem; color: var(--text-muted); margin: 0; line-height: 1.4; }
+
+.wizard-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.wizard-form label { font-size: 0.88rem; font-weight: 600; color: var(--text-muted); margin-top: 4px; }
+
+.wizard-error, .login-error {
+  background: rgba(239,68,68,0.1); border: 1px solid var(--danger);
+  color: var(--danger); border-radius: 8px;
+  padding: 10px 14px; font-size: 0.88rem; margin-bottom: 12px;
+}
+
+.wizard-actions { display: flex; gap: 12px; margin-top: 8px; }
+.btn-wizard-next {
+  flex: 2; background: var(--accent); color: white;
+  border: none; border-radius: 10px; padding: 12px 20px;
+  font-weight: 700; font-size: 1rem; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-wizard-next:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+.btn-wizard-next:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-wizard-back {
+  flex: 1; background: var(--bg-color); color: var(--text-muted);
+  border: 1px solid var(--border-color); border-radius: 10px;
+  padding: 12px; font-weight: 600; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-wizard-back:hover { background: var(--border-color); }
+
+.confirm-summary {
+  background: var(--bg-color); border-radius: 10px;
+  padding: 16px 20px; margin-bottom: 20px;
+}
+.confirm-row {
+  display: flex; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid var(--border-color);
+  font-size: 0.92rem;
+}
+.confirm-row:last-child { border-bottom: none; }
+.confirm-row span { color: var(--text-muted); }
+
+/* ─── Login ─────────────────────────────────────────────────────── */
+.login-bg { background: linear-gradient(135deg, #0f1115 0%, #0c1240 100%); }
+.login-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 20px; padding: 48px 40px;
+  width: 100%; max-width: 400px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  animation: fadeIn 0.4s ease;
+}
+.login-logo { text-align: center; margin-bottom: 32px; }
+.login-logo h1 { font-size: 1.5rem; font-weight: 800; margin: 12px 0 4px; }
+.login-logo p { color: var(--text-muted); }
+.login-logo img { border-radius: 12px; }
+.login-form { display: flex; flex-direction: column; gap: 8px; }
+.login-form label { font-size: 0.88rem; font-weight: 600; color: var(--text-muted); margin-top: 8px; }
+.btn-login {
+  width: 100%; margin-top: 16px;
+  background: var(--accent); color: white;
+  border: none; border-radius: 10px; padding: 13px;
+  font-weight: 700; font-size: 1rem; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-login:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+.btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ─── User Badge (sidebar bottom) ───────────────────────────────── */
+.user-badge {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-color);
+  background: var(--sidebar-bg);
+  margin-top: auto; /* Push to bottom if sidebar has flex-grow elements */
+}
+.user-avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--accent); color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 0.95rem; flex-shrink: 0;
+}
+.user-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.user-name { font-size: 0.88rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn-logout {
+  background: none; border: 1px solid var(--border-color);
+  border-radius: 6px; width: 30px; height: 30px;
+  cursor: pointer; color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; transition: all 0.2s ease; flex-shrink: 0;
+}
+.btn-logout:hover { background: var(--danger); border-color: var(--danger); color: white; }
+
+/* ─── Role Badge ─────────────────────────────────────────────────── */
+.role-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.role-admin { background: rgba(99,102,241,0.15); color: var(--accent); }
+.role-emp { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+
+/* ─── Admin View ─────────────────────────────────────────────────── */
+.view-admin { padding-bottom: 40px; }
+
+/* ─── Settings Extra ─────────────────────────────────────────────── */
+.setting-card-wide {
+  grid-column: 1 / -1;
+}
+.mode-toggle-row {
+  display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap;
+}
+.mode-current-badge {
+  padding: 4px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 700;
+}
+.mode-badge-single { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+.mode-badge-multi { background: rgba(99,102,241,0.15); color: var(--accent); }
+.mode-select { flex: 1; min-width: 160px; }
+.btn-change-mode {
+  background: var(--accent); color: white;
+  border: none; border-radius: 8px; padding: 8px 16px;
+  font-weight: 600; font-size: 0.9rem; cursor: pointer;
+  transition: all 0.2s ease; white-space: nowrap;
+}
+.btn-change-mode:hover:not(:disabled) { filter: brightness(1.12); }
+.btn-change-mode:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.danger-card { border-color: rgba(239,68,68,0.3) !important; }
+.danger-label { color: var(--danger) !important; font-weight: 700; }
+.danger-desc { font-size: 0.85rem; color: var(--text-muted); margin: 8px 0 14px; line-height: 1.5; }
+.btn-danger {
+  background: var(--danger); color: white;
+  border: none; border-radius: 8px; padding: 10px 20px;
+  font-weight: 700; cursor: pointer; font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+.btn-danger:hover { filter: brightness(1.1); }
 </style>
