@@ -50,6 +50,7 @@ interface DashboardData {
   recent_urls: UrlEntry[];
   keyboard_count: number;
   mouse_count: number;
+  productivity_score: number;
 }
 
 interface TimeLogEntry {
@@ -101,6 +102,8 @@ interface UserProductivityStat {
   username: string;
   total_active_seconds: number;
   session_count: number;
+  keyboard_count: number;
+  mouse_count: number;
 }
 
 interface CreateUserPayload {
@@ -132,6 +135,7 @@ const dashboardData = ref<DashboardData>({
   recent_urls: [],
   keyboard_count: 0,
   mouse_count: 0,
+  productivity_score: 0,
 });
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 let taskbarInterval: ReturnType<typeof setInterval> | null = null;
@@ -207,6 +211,13 @@ let pauseStartedAt: number | null = null;
 const filterType = ref('daily');
 const customFromDate = ref(new Date().toISOString().split('T')[0]);
 const customToDate = ref(new Date().toISOString().split('T')[0]);
+
+const activeSessionSeconds = computed(() => {
+  if (!activeSession.value) return 0;
+  const start = new Date(activeSession.value.start_time).getTime();
+  const now = Date.now();
+  return Math.floor((now - start) / 1000) - pausedSeconds.value;
+});
 
 const timeLogsList = ref<TimeLogEntry[]>([]);
 const urlsList = ref<UrlEntryFull[]>([]);
@@ -647,7 +658,7 @@ const loadAdminData = async () => {
   } catch (e) { console.error('Failed to load admin data', e); }
 };
 
-const loadUserDetail = async (user: AuthUser, tab: 'screenshots' | 'timelogs' | 'activity' | 'urls', append = false) => {
+const loadUserDetail = async (user: AuthUser, tab: 'screenshots' | 'timelogs' | 'activity' | 'urls' | 'categories', append = false) => {
   selectedUser.value = user;
   adminTab.value = tab;
   adminDrillLoading.value = true;
