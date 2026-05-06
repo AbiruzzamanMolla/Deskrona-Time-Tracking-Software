@@ -22,7 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-project.md
 src-tauri/target
 src-tauri/gen
 *.exe
@@ -32,6 +31,3 @@ src-tauri/gen
 *.dmg
 screenshots/
 app.db
-.gemini/
-release.md
-.agents

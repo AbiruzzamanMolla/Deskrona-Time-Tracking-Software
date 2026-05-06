@@ -5,11 +5,14 @@ mod config;
 mod auth;
 
 use tauri_plugin_autostart::ManagerExt;
+use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
+
+
 
 // ─── Existing Commands ────────────────────────────────────────────
 
@@ -74,6 +77,35 @@ fn cmd_set_tracking(status: String) -> Result<(), String> {
 #[tauri::command]
 fn cmd_get_tracking() -> Result<String, String> {
     Ok(tracking::get_tracking_status().to_string())
+}
+
+#[derive(Serialize)]
+pub struct TrayInfo {
+    pub status: String,
+    pub elapsed: String,
+}
+
+#[tauri::command]
+fn cmd_get_tray_info(app_handle: tauri::AppHandle) -> Result<TrayInfo, String> {
+    let status = tracking::get_tracking_status().to_string();
+    let elapsed = if status == "running" {
+        if let Ok(Some(session)) = db::get_active_session(&app_handle) {
+            let start = chrono::DateTime::parse_from_rfc3339(&session.start_time)
+                .map_err(|e| e.to_string())?;
+            let now = chrono::Local::now();
+            let duration = now.signed_duration_since(start);
+            let secs = duration.num_seconds();
+            let hours = secs / 3600;
+            let mins = (secs % 3600) / 60;
+            let secs = secs % 60;
+            format!("{:02}:{:02}:{:02}", hours, mins, secs)
+        } else {
+            "00:00:00".to_string()
+        }
+    } else {
+        "00:00:00".to_string()
+    };
+    Ok(TrayInfo { status, elapsed })
 }
 
 #[tauri::command]
@@ -287,15 +319,51 @@ pub fn run() {
             // Start backup scheduler
             backup::start_backup_scheduler(app.handle().clone());
 
-            let start_i = MenuItem::with_id(app, "start", "Start Tracking", true, None::<&str>)?;
-            let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
-            let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            
-            let menu = Menu::with_items(app, &[&start_i, &pause_i, &stop_i, &quit_i])?;
+            let app_handle = app.handle().clone();
+
+            fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+                let status = tracking::get_tracking_status();
+                let elapsed = if status == "running" {
+                    if let Ok(Some(session)) = db::get_active_session(app) {
+                        if let Ok(start) = chrono::DateTime::parse_from_rfc3339(&session.start_time) {
+                            let now = chrono::Local::now();
+                            let duration = now.signed_duration_since(start);
+                            let secs = duration.num_seconds();
+                            let hours = secs / 3600;
+                            let mins = (secs % 3600) / 60;
+                            let secs = secs % 60;
+                            format!("{:02}:{:02}:{:02}", hours, mins, secs)
+                        } else { "00:00:00".to_string() }
+                    } else { "00:00:00".to_string() }
+                } else { "00:00:00".to_string() };
+
+                let status_text = format!("Status: {} ({})", status, elapsed);
+                let status_item = MenuItem::with_id(app, "status", &status_text, false, None::<&str>)?;
+                let start_i = MenuItem::with_id(app, "start", "Start Tracking", true, None::<&str>)?;
+                let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
+                let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                
+                Menu::with_items(app, &[&status_item, &start_i, &pause_i, &stop_i, &quit_i])
+            }
+
+            let menu = build_tray_menu(&app_handle)?;
+
+            // Hide to tray instead of closing when user clicks X
+            let main_window = app.get_webview_window("main").unwrap();
+            let window_clone = main_window.clone();
+            main_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window_clone.hide();
+                }
+            });
+
+            let status_tooltip = format!("Time Guardian - Status: {}", tracking::get_tracking_status());
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
+                .tooltip(&status_tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -346,6 +414,7 @@ pub fn run() {
             cmd_get_dashboard_data,
             cmd_set_tracking,
             cmd_get_tracking,
+            cmd_get_tray_info,
             cmd_get_time_logs_range,
             cmd_get_urls_range,
             cmd_get_screenshots_range,
