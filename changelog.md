@@ -2,6 +2,17 @@
 
 All notable changes to **Deskrona** will be documented in this file.
 
+## [0.0.7] - 2026-05-07
+
+### ✨ Added
+
+- **Automatic Update Check**: App now automatically checks for updates on startup.
+
+### 🚀 Release
+
+- Bumped version to 0.0.7.
+- Fixed version discrepancy in UI.
+
 ## [0.0.6] - 2026-05-07
 
 ### ✨ Added

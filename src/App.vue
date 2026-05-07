@@ -203,7 +203,7 @@ watch(trackingStatus, async (newStatus) => {
 });
 
 // ─── Update Check State ─────────────────────────────────────
-const currentVersion = "0.0.5";
+const currentVersion = "0.0.7";
 const latestVersion = ref<string>("");
 const updateAvailable = ref(false);
 const updateCheckLoading = ref(false);
@@ -869,6 +869,7 @@ let appInitDone = false;
 const initApp = async () => {
   if (appInitDone) return;
   appInitDone = true;
+  checkForUpdates();
   await loadSettings();
   defaultScreenshotDir.value = await invoke("cmd_get_screenshot_dir");
   
