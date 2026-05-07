@@ -211,6 +211,10 @@ const messages = {
       privacyNoticeDesc:
         "Deskrona tracks app usage, browser history, and input activity while tracking is active.",
       dismiss: "Dismiss",
+      nativeTrackingTitle: "Deskrona Tracking",
+      nativeTrackingStarted: "Tracking started.",
+      nativeTrackingPaused: "Tracking paused.",
+      nativeTrackingStopped: "Tracking stopped.",
       // Update Notification
       updateAvailable: "Update Available!",
       updateDesc: "A new version {version} is available for download.",
@@ -426,6 +430,10 @@ const messages = {
         "মোড পরিবর্তন করতে ফ্যাক্টরি রিসেট প্রয়োজন। এটি সমস্ত স্থানীয় ডেটা মুছে ফেলবে।",
       resetAppDesc:
         "অ্যাপ্লিকেশনটিকে তার আসল অবস্থায় রিসেট করুন। এটি আপনার সমস্ত স্থানীয় ট্র্যাকিং ডেটা, সেটিংস এবং স্ক্রিনশট স্থায়ীভাবে মুছে ফেলবে।",
+      nativeTrackingTitle: "ডেস্করোনা ট্র্যাকিং",
+      nativeTrackingStarted: "ট্র্যাকিং শুরু হয়েছে।",
+      nativeTrackingPaused: "ট্র্যাকিং বিরতিতে আছে।",
+      nativeTrackingStopped: "ট্র্যাকিং বন্ধ হয়েছে।",
     },
   },
 };

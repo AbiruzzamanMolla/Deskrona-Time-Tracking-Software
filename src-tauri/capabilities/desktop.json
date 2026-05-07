@@ -13,6 +13,7 @@
     "core:default",
     "autostart:default",
     "dialog:default",
-    "opener:default"
+    "opener:default",
+    "notification:default"
   ]
 }

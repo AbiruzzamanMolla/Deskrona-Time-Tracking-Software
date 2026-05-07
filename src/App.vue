@@ -4,6 +4,11 @@ import { onMounted, onUnmounted, ref, watch, computed } from "vue";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { useI18n } from "vue-i18n";
 import { Pie } from "vue-chartjs";
 import { Chart as ChartJS, Title, Tooltip, Legend, ArcElement } from "chart.js";
@@ -647,6 +652,39 @@ const refreshDashboard = async () => {
 
 const loadDashboardData = refreshDashboard;
 
+const ensureNativeNotificationPermission = async () => {
+  try {
+    const granted = await isPermissionGranted();
+    if (granted) return true;
+    const permission = await requestPermission();
+    return permission === "granted";
+  } catch (e) {
+    console.error("Notification permission check failed:", e);
+    return false;
+  }
+};
+
+const sendTrackingNativeNotification = async (status: string) => {
+  const allowed = await ensureNativeNotificationPermission();
+  if (!allowed) return;
+
+  const body =
+    status === "running"
+      ? t("message.nativeTrackingStarted")
+      : status === "paused"
+      ? t("message.nativeTrackingPaused")
+      : t("message.nativeTrackingStopped");
+
+  try {
+    await sendNotification({
+      title: t("message.nativeTrackingTitle"),
+      body,
+    });
+  } catch (e) {
+    console.error("Native notification failed:", e);
+  }
+};
+
 // ─── Tracking Control ────────────────────────────────────────────
 const loadTrackingStatus = async () => {
   try {
@@ -670,6 +708,7 @@ const setTracking = async (status: string) => {
       pauseStartedAt = null;
     }
     trackingStatus.value = status;
+    await sendTrackingNativeNotification(status);
   } catch (e) {
     console.error("Failed to set tracking:", e);
   }
@@ -1464,8 +1503,9 @@ const doChangeMode = async () => {
               <strong>{{ t("message.privacyNotice") }}</strong>
               <p>{{ t("message.privacyNoticeDesc") }}</p>
             </div>
-            <button class="privacy-dismiss" @click="privacyNoticeDismissed = true">
-              {{ t("message.dismiss") }}
+            <button class="privacy-dismiss" :title="t('message.dismiss')" :aria-label="t('message.dismiss')"
+              @click="privacyNoticeDismissed = true">
+              ×
             </button>
           </div>
         </div>
@@ -4275,10 +4315,12 @@ select {
   animation: slideDown 0.3s ease;
 }
 
-.privacy-notice-content {
+.privacy-content {
   display: flex;
   align-items: center;
   gap: 12px;
+  position: relative;
+  padding-right: 28px;
 }
 
 .privacy-icon {
@@ -4302,12 +4344,21 @@ select {
 }
 
 .privacy-dismiss {
-  background: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
   color: white;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 0.8rem;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
   transition: all 0.15s ease;
 }
