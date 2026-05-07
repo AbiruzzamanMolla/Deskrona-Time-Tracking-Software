@@ -203,7 +203,9 @@ watch(trackingStatus, async (newStatus) => {
 });
 
 // ─── Update Check State ─────────────────────────────────────
-const currentVersion = "0.0.7";
+import packageJson from "../package.json";
+const currentVersion = packageJson.version;
+
 const latestVersion = ref<string>("");
 const updateAvailable = ref(false);
 const updateCheckLoading = ref(false);
