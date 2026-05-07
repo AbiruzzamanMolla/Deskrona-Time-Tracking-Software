@@ -22,6 +22,11 @@ interface Settings {
   backup_frequency: string;
   backup_location: string;
   idle_threshold: number;
+  overlay_enabled?: boolean;
+  overlay_always_on_top?: boolean;
+  overlay_click_through?: boolean;
+  overlay_position_x?: number;
+  overlay_position_y?: number;
 }
 
 interface Session {
@@ -143,6 +148,69 @@ let taskbarInterval: ReturnType<typeof setInterval> | null = null;
 const trackingStatus = ref<string>("running");
 const defaultScreenshotDir = ref<string>("");
 const privacyNoticeDismissed = ref(false);
+
+// Overlay state
+const overlayEnabled = ref(true);
+const overlayAlwaysOnTop = ref(true);
+const overlayClickThrough = ref(false);
+const overlayPosition = ref({ x: -1, y: 20 });
+const overlayElapsed = ref(0);
+let overlayInterval: ReturnType<typeof setInterval> | null = null;
+
+const showOverlay = async () => {
+  console.log("showOverlay called, overlayEnabled:", overlayEnabled.value);
+  if (!overlayEnabled.value) return;
+  // Default to 20px from right edge of primary monitor (assuming 1920px width)
+  // Use Math.min to ensure it's visible on smaller screens too
+  const screenWidth = window.screen.width;
+  const x = overlayPosition.value.x >= 0 
+    ? overlayPosition.value.x 
+    : Math.max(20, screenWidth - 220);
+  const y = overlayPosition.value.y;
+  console.log("Showing overlay at:", x, y, "screen width:", screenWidth);
+  try {
+    await invoke("show_overlay_window", {
+      x,
+      y,
+      alwaysOnTop: overlayAlwaysOnTop.value,
+      clickThrough: overlayClickThrough.value
+    });
+    console.log("Overlay shown successfully");
+  } catch (e) {
+    console.error("Failed to show overlay:", e);
+  }
+};
+
+const hideOverlay = async () => {
+  await invoke("hide_overlay_window");
+};
+
+const updateOverlayTimer = async () => {
+  if (trackingStatus.value === "running") {
+    overlayElapsed.value++;
+  }
+  const hours = Math.floor(overlayElapsed.value / 3600);
+  const mins = Math.floor((overlayElapsed.value % 3600) / 60);
+  const secs = overlayElapsed.value % 60;
+  const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  await invoke("update_overlay_time", { time: timeStr, status: trackingStatus.value });
+};
+
+watch(trackingStatus, async (newStatus) => {
+  if (newStatus === "running" || newStatus === "paused") {
+    await showOverlay();
+    if (newStatus === "running" && !overlayInterval) {
+      overlayElapsed.value = 0;
+      overlayInterval = setInterval(updateOverlayTimer, 1000);
+    }
+  } else {
+    if (overlayInterval) {
+      clearInterval(overlayInterval);
+      overlayInterval = null;
+    }
+    await hideOverlay();
+  }
+});
 
 // ─── Update Check State ─────────────────────────────────────
 const currentVersion = "0.0.5";
@@ -458,6 +526,14 @@ const loadSettings = async () => {
     settings.value = s;
     locale.value = s.language;
     applyTheme();
+    // Load overlay settings
+    overlayEnabled.value = (s as any).overlay_enabled || false;
+    overlayAlwaysOnTop.value = (s as any).overlay_always_on_top || false;
+    overlayClickThrough.value = (s as any).overlay_click_through || false;
+    overlayPosition.value = {
+      x: (s as any).overlay_position_x ?? -1,
+      y: (s as any).overlay_position_y ?? 20
+    };
   } catch (error) {
     console.error("Failed to load settings:", error);
   }
@@ -471,6 +547,16 @@ const saveSettings = async () => {
   } catch (error) {
     console.error("Failed to save settings:", error);
   }
+};
+
+const saveOverlaySettings = async () => {
+  const s = await invoke<Settings>("get_settings");
+  (s as any).overlay_enabled = overlayEnabled.value ? 1 : 0;
+  (s as any).overlay_always_on_top = overlayAlwaysOnTop.value ? 1 : 0;
+  (s as any).overlay_click_through = overlayClickThrough.value ? 1 : 0;
+  (s as any).overlay_position_x = overlayPosition.value.x;
+  (s as any).overlay_position_y = overlayPosition.value.y;
+  await invoke("update_settings", { settings: s });
 };
 
 const applyTheme = () => {
@@ -726,6 +812,14 @@ const initApp = async () => {
   defaultScreenshotDir.value = await invoke("cmd_get_screenshot_dir");
   await loadActiveSession();
   await loadTrackingStatus();
+  // Show overlay if tracking is already running/paused
+  if (trackingStatus.value === "running" || trackingStatus.value === "paused") {
+    console.log("Init: showing overlay because tracking is", trackingStatus.value);
+    await showOverlay();
+    if (trackingStatus.value === "running" && !overlayInterval) {
+      overlayInterval = setInterval(updateOverlayTimer, 1000);
+    }
+  }
   await refreshDashboard();
   window
     .matchMedia("(prefers-color-scheme: dark)")
@@ -1965,6 +2059,38 @@ const doChangeMode = async () => {
                         : t("message.disabled")
                     }}
                   </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Overlay Settings -->
+          <section class="settings-section">
+            <h2 class="section-title">🪟 {{ t("message.overlay") || "Overlay" }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card">
+                <label>{{ t("message.enableOverlay") || "Enable Overlay" }}</label>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="overlayEnabled" @change="saveOverlaySettings" />
+                  <span :style="{ color: overlayEnabled ? 'var(--success)' : 'var(--danger)' }">
+                    {{ overlayEnabled ? t("message.enabled") : t("message.disabled") }}
+                  </span>
+                </div>
+              </div>
+              <div class="card setting-card" :class="{ 'card-disabled': !overlayEnabled }">
+                <label>{{ t("message.alwaysOnTop") || "Always on Top" }}</label>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="overlayAlwaysOnTop" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
+                  <span :style="{ color: overlayAlwaysOnTop ? 'var(--success)' : 'var(--text-muted)' }">
+                    {{ overlayAlwaysOnTop ? t("message.enabled") : t("message.disabled") }}
+                  </span>
+                </div>
+              </div>
+              <div class="card setting-card" :class="{ 'card-disabled': !overlayEnabled }">
+                <label>{{ t("message.clickThrough") || "Click Through" }}</label>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="overlayClickThrough" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
+                  <small class="setting-desc">{{ t("message.clickThroughDesc") || "Mouse clicks pass through to apps below" }}</small>
                 </div>
               </div>
             </div>

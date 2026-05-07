@@ -2,6 +2,25 @@
 
 All notable changes to **Deskrona** will be documented in this file.
 
+## [0.0.6] - 2026-05-07
+
+### ✨ Added
+
+- **Taskbar Timer**: System tray tooltip now shows real-time tracking time (e.g., "Deskrona - Running: 01:23:45").
+- **Overlay Window**: Optional compact floating timer that shows when tracking is active or paused. Features:
+  - Draggable position anywhere on screen (default: top-right)
+  - Single button: Pause (⏸) when running, Resume (▶) when paused
+  - Only shows when tracking is active/paused, hidden when stopped
+  - Icon buttons with hover titles
+- **Overlay Settings**: New settings section in Settings view:
+  - Enable/Disable overlay
+  - Always on Top toggle
+  - Click-through toggle (mouse clicks pass through to apps below)
+
+### 🐛 Fixed
+
+- **Taskbar Timer**: Fixed tray tooltip showing "00:00:00" - now properly shows elapsed tracking time.
+
 ## [0.0.5] - 2026-05-06
 
 ### ✨ Added

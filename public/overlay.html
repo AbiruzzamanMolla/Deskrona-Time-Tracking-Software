@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deskrona Timer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .overlay-container {
+      width: 100vw;
+      height: 100vh;
+      background: rgba(26, 26, 26, 0.92);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      cursor: move;
+      user-select: none;
+      -webkit-app-region: drag;
+    }
+    .time-display {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .control-btn {
+      -webkit-app-region: no-drag;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 20px;
+      padding: 4px;
+      border-radius: 4px;
+      transition: background 0.2s;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .control-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    .control-btn[title]:hover::after {
+      content: attr(title);
+      position: absolute;
+      top: -28px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="overlay-container" id="overlay">
+    <span class="time-display" id="timeDisplay">00:00:00</span>
+    <button class="control-btn" id="controlBtn" title="Pause">⏸</button>
+  </div>
+  <script>
+    let currentStatus = 'running';
+    let isClickThrough = false;
+
+    function updateOverlayTime(time, status) {
+      document.getElementById('timeDisplay').textContent = time;
+      currentStatus = status;
+      const btn = document.getElementById('controlBtn');
+      if (status === 'running') {
+        btn.textContent = '⏸';
+        btn.title = 'Pause';
+      } else if (status === 'paused') {
+        btn.textContent = '▶';
+        btn.title = 'Resume';
+      }
+    }
+
+    document.getElementById('controlBtn').addEventListener('click', async () => {
+      try {
+        const { invoke } = window.__TAURI__.core;
+        if (currentStatus === 'running') {
+          await invoke('cmd_set_tracking', { status: 'paused' });
+        } else if (currentStatus === 'paused') {
+          await invoke('cmd_set_tracking', { status: 'running' });
+        }
+      } catch (e) {
+        console.error('Failed to toggle tracking:', e);
+      }
+    });
+
+    window.updateOverlayTime = updateOverlayTime;
+  </script>
+</body>
+</html>

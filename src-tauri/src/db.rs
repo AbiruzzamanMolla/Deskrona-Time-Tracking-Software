@@ -133,8 +133,8 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
 
     // Insert default settings if none exists
     conn.execute(
-        "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, created_at, updated_at)
-         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, ?3, ?3
+        "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
+         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 0, 0, 0, -1, 20, ?3, ?3
          WHERE NOT EXISTS (SELECT 1 FROM settings WHERE user_id = ?2)",
         (
             uuid::Uuid::new_v4().to_string(),
@@ -156,12 +156,17 @@ pub struct Settings {
     pub backup_location: String,
     pub idle_threshold: i32,
     pub is_screenshot_enabled: bool,
+    pub overlay_enabled: bool,
+    pub overlay_always_on_top: bool,
+    pub overlay_click_through: bool,
+    pub overlay_position_x: i32,
+    pub overlay_position_y: i32,
 }
 
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(is_screenshot_enabled, 1) FROM settings WHERE user_id = 'default_user' LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, -1), COALESCE(overlay_position_y, 20) FROM settings WHERE user_id = 'default_user' LIMIT 1")?;
     let settings = stmt.query_row([], |row| {
         Ok(Settings {
             language: row.get(0)?,
@@ -173,6 +178,11 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             backup_location: row.get(6)?,
             idle_threshold: row.get(7)?,
             is_screenshot_enabled: row.get::<_, i32>(8)? != 0,
+            overlay_enabled: row.get::<_, i32>(9)? != 0,
+            overlay_always_on_top: row.get::<_, i32>(10)? != 0,
+            overlay_click_through: row.get::<_, i32>(11)? != 0,
+            overlay_position_x: row.get(12)?,
+            overlay_position_y: row.get(13)?,
         })
     })?;
     Ok(settings)
@@ -193,7 +203,12 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             backup_location = ?7,
             idle_threshold = ?8,
             is_screenshot_enabled = ?9,
-            updated_at = ?10 
+            overlay_enabled = ?10,
+            overlay_always_on_top = ?11,
+            overlay_click_through = ?12,
+            overlay_position_x = ?13,
+            overlay_position_y = ?14,
+            updated_at = ?15 
         WHERE user_id = 'default_user'",
         params![
             settings.language,
@@ -205,6 +220,11 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.backup_location,
             settings.idle_threshold,
             settings.is_screenshot_enabled as i32,
+            settings.overlay_enabled as i32,
+            settings.overlay_always_on_top as i32,
+            settings.overlay_click_through as i32,
+            settings.overlay_position_x,
+            settings.overlay_position_y,
             now
         ],
     )?;

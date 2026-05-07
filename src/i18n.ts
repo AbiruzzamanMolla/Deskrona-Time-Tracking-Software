@@ -96,6 +96,12 @@ const messages = {
       controlledByAdmin: "Controlled by Admin",
       idleTimeout: "Idle Timeout (minutes)",
       idleThresholdDesc: "Mark as idle if no activity for this duration",
+      // Overlay
+      overlay: "Overlay",
+      enableOverlay: "Enable Overlay",
+      alwaysOnTop: "Always on Top",
+      clickThrough: "Click Through",
+      clickThroughDesc: "Mouse clicks pass through to apps below",
       screenshotStatus: "Taking Screenshot Status",
       systemMode: "System Mode",
       currentMode: "Current mode",
@@ -311,6 +317,12 @@ const messages = {
       idleTimeout: "অলস টাইমআউট (মিনিট)",
       idleThresholdDesc:
         "এই সময়ের জন্য কার্যকলাপ না থাকলে অলস হিসেবে চিহ্নিত করুন",
+      // Overlay
+      overlay: "ওভারলে",
+      enableOverlay: "ওভারলে সক্ষম করুন",
+      alwaysOnTop: "সবসময় উপরে",
+      clickThrough: "ক্লিক থ্রু",
+      clickThroughDesc: "মাউস ক্লিক নিচের অ্যাপে যাবে",
       screenshotStatus: "স্ক্রিনশট নেওয়ার অবস্থা",
       systemMode: "সিস্টেম মোড",
       currentMode: "বর্তমান মোড",

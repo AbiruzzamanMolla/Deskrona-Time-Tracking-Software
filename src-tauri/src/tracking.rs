@@ -15,6 +15,62 @@ use screenshots::Screen;
 // Tracking states: 0 = stopped, 1 = running, 2 = paused
 pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // Start as running by default
 
+pub static TRACKING_START_TIME: Mutex<Option<DateTime<Local>>> = Mutex::new(None);
+pub static TRACKING_PAUSED_TIME: Mutex<Option<i64>> = Mutex::new(None);
+
+pub fn get_tracking_elapsed_seconds() -> i64 {
+    let status = get_tracking_status();
+    if status == "stopped" {
+        return 0;
+    }
+
+    if let Ok(start_guard) = TRACKING_START_TIME.lock() {
+        if let Some(start_time) = *start_guard {
+            let now = Local::now();
+            let mut elapsed = (now - start_time).num_seconds();
+
+            if let Ok(paused_guard) = TRACKING_PAUSED_TIME.lock() {
+                if let Some(paused_dur) = *paused_guard {
+                    elapsed -= paused_dur;
+                }
+            }
+
+            return if elapsed > 0 { elapsed } else { 0 };
+        }
+    }
+    0
+}
+
+pub fn get_tracking_formatted_time() -> String {
+    let seconds = get_tracking_elapsed_seconds();
+    let hours = seconds / 3600;
+    let mins = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    format!("{:02}:{:02}:{:02}", hours, mins, secs)
+}
+
+pub fn set_tracking_start_time(time: Option<DateTime<Local>>) {
+    if let Ok(mut guard) = TRACKING_START_TIME.lock() {
+        *guard = time;
+    }
+}
+
+pub fn add_paused_time(seconds: i64) {
+    if let Ok(mut guard) = TRACKING_PAUSED_TIME.lock() {
+        if let Some(current) = *guard {
+            *guard = Some(current + seconds);
+        } else {
+            *guard = Some(seconds);
+        }
+    }
+}
+
+pub fn reset_paused_time() {
+    if let Ok(mut guard) = TRACKING_PAUSED_TIME.lock() {
+        *guard = None;
+    }
+}
+
 pub static ACTIVE_USER_ID: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn set_active_user_id(user_id: Option<String>) {
@@ -48,6 +104,20 @@ pub fn set_tracking_status(status: &str) {
         "paused" => 2,
         _ => return,
     };
+
+    let current_status = get_tracking_status();
+
+    if val == 1 && current_status != "running" {
+        set_tracking_start_time(Some(Local::now()));
+        reset_paused_time();
+    } else if val == 2 && current_status == "running" {
+        let elapsed = get_tracking_elapsed_seconds();
+        add_paused_time(elapsed);
+    } else if val == 0 {
+        set_tracking_start_time(None);
+        reset_paused_time();
+    }
+
     TRACKING_STATE.store(val, Ordering::SeqCst);
 }
 

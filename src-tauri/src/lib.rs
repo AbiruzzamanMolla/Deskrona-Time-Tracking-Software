@@ -4,13 +4,65 @@ mod backup;
 mod config;
 mod auth;
 
+use std::sync::atomic::AtomicBool;
+use std::thread;
+use std::time::Duration;
 use tauri_plugin_autostart::ManagerExt;
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent, TrayIcon},
     Emitter, Manager,
 };
+
+static TRAY_HANDLE: std::sync::OnceLock<tauri::tray::TrayIcon> = std::sync::OnceLock::new();
+static UPDATE_TOOLTIP: AtomicBool = AtomicBool::new(true);
+
+#[tauri::command]
+fn show_overlay_window(app: tauri::AppHandle, x: i32, y: i32, always_on_top: bool, click_through: bool) -> Result<(), String> {
+    println!("show_overlay_window called: x={}, y={}, always_on_top={}, click_through={}", x, y, always_on_top, click_through);
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+        let _ = window.set_always_on_top(always_on_top);
+        let _ = window.set_ignore_cursor_events(click_through);
+        let _ = window.show();
+        let _ = window.set_focus();
+        println!("Overlay window shown successfully");
+        Ok(())
+    } else {
+        println!("Overlay window not found");
+        Err("Overlay window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn hide_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
+    println!("hide_overlay_window called");
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.hide();
+        println!("Overlay window hidden successfully");
+        Ok(())
+    } else {
+        println!("Overlay window not found for hiding");
+        Err("Overlay window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn update_overlay_time(app: tauri::AppHandle, time: String, status: String) -> Result<(), String> {
+    println!("update_overlay_time called: time={}, status={}", time, status);
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.eval(&format!(
+            "if(window.updateOverlayTime) window.updateOverlayTime('{}', '{}');",
+            time, status
+        ));
+        println!("Overlay time updated successfully");
+        Ok(())
+    } else {
+        println!("Overlay window not found for time update");
+        Err("Overlay window not found".to_string())
+    }
+}
 
 
 
@@ -361,7 +413,7 @@ pub fn run() {
 
             let status_tooltip = format!("Deskrona - Status: {}", tracking::get_tracking_status());
 
-            let _tray = TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip(&status_tooltip)
                 .menu(&menu)
@@ -399,6 +451,27 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            let _ = TRAY_HANDLE.set(tray);
+
+            // Background thread to update tray tooltip with elapsed time
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let status = tracking::get_tracking_status();
+                    if status == "running" || status == "paused" {
+                        let time = tracking::get_tracking_formatted_time();
+                        let tooltip = if status == "running" {
+                            format!("Deskrona - Running: {}", time)
+                        } else {
+                            format!("Deskrona - Paused: {}", time)
+                        };
+                        if let Some(tray) = TRAY_HANDLE.get() {
+                            let _ = tray.set_tooltip(Some(&tooltip));
+                        }
+                    }
+                }
+            });
 
             Ok(())
         })
@@ -439,8 +512,38 @@ pub fn run() {
             cmd_get_user_activity,
             cmd_get_user_input_stats,
             cmd_get_user_urls,
-            cmd_get_all_app_categories,
+cmd_get_all_app_categories,
+            show_overlay_window,
+            hide_overlay_window,
+            update_overlay_time,
         ])
+        .setup(|app| {
+            // Check if overlay window exists and create hidden if needed
+            let overlay = app.get_webview_window("overlay");
+            if overlay.is_none() {
+                if let Ok(window) = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "overlay",
+                    tauri::WebviewUrl::App("overlay.html".into()),
+                )
+                .title("Deskrona Timer")
+                .inner_size(200.0, 60.0)
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .visible(false)
+                .skip_taskbar(true)
+                .resizable(false)
+                .build()
+                {
+                    println!("Overlay window created successfully");
+                    let _ = window.hide();
+                } else {
+                    println!("Failed to create overlay window");
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
