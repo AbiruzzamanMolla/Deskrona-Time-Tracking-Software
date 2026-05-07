@@ -13,7 +13,7 @@ use crate::db::get_db_path;
 use screenshots::Screen;
 
 // Tracking states: 0 = stopped, 1 = running, 2 = paused
-pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // Start as running by default
+pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // 1: running, 2: paused, 0: stopped
 
 pub static TRACKING_START_TIME: Mutex<Option<DateTime<Local>>> = Mutex::new(None);
 pub static TRACKING_PAUSED_TIME: Mutex<Option<i64>> = Mutex::new(None);
@@ -29,9 +29,20 @@ pub fn get_tracking_elapsed_seconds() -> i64 {
             let now = Local::now();
             let mut elapsed = (now - start_time).num_seconds();
 
+            // Subtract completed pause durations
             if let Ok(paused_guard) = TRACKING_PAUSED_TIME.lock() {
                 if let Some(paused_dur) = *paused_guard {
                     elapsed -= paused_dur;
+                }
+            }
+
+            // Subtract current pause duration if we are currently paused
+            if status == "paused" {
+                if let Ok(pause_start_guard) = TRACKING_PAUSE_START.lock() {
+                    if let Some(pause_start) = *pause_start_guard {
+                        let current_pause = (now - pause_start).num_seconds();
+                        elapsed -= current_pause;
+                    }
                 }
             }
 
@@ -41,13 +52,13 @@ pub fn get_tracking_elapsed_seconds() -> i64 {
     0
 }
 
-pub fn get_tracking_formatted_time() -> String {
-    let seconds = get_tracking_elapsed_seconds();
+pub fn format_duration(seconds: i64) -> String {
     let hours = seconds / 3600;
     let mins = (seconds % 3600) / 60;
     let secs = seconds % 60;
     format!("{:02}:{:02}:{:02}", hours, mins, secs)
 }
+
 
 pub fn set_tracking_start_time(time: Option<DateTime<Local>>) {
     if let Ok(mut guard) = TRACKING_START_TIME.lock() {
@@ -72,6 +83,7 @@ pub fn reset_paused_time() {
 }
 
 pub static ACTIVE_USER_ID: Mutex<Option<String>> = Mutex::new(None);
+pub static CURRENT_WINDOW: Mutex<Option<ActiveWindowInfo>> = Mutex::new(None);
 
 pub fn set_active_user_id(user_id: Option<String>) {
     if let Ok(mut guard) = ACTIVE_USER_ID.lock() {
@@ -88,6 +100,18 @@ pub fn get_active_user_id() -> String {
     "default_user".to_string()
 }
 
+pub fn get_current_window_duration() -> i64 {
+    if get_tracking_status() != "running" {
+        return 0;
+    }
+    if let Ok(guard) = CURRENT_WINDOW.lock() {
+        if let Some(cw) = &*guard {
+            return (Local::now().naive_local() - cw.start_time.naive_local()).num_seconds();
+        }
+    }
+    0
+}
+
 pub fn get_tracking_status() -> &'static str {
     match TRACKING_STATE.load(Ordering::SeqCst) {
         0 => "stopped",
@@ -96,6 +120,8 @@ pub fn get_tracking_status() -> &'static str {
         _ => "unknown",
     }
 }
+
+pub static TRACKING_PAUSE_START: Mutex<Option<DateTime<Local>>> = Mutex::new(None);
 
 pub fn set_tracking_status(status: &str) {
     let val = match status {
@@ -108,24 +134,40 @@ pub fn set_tracking_status(status: &str) {
     let current_status = get_tracking_status();
 
     if val == 1 && current_status != "running" {
-        set_tracking_start_time(Some(Local::now()));
-        reset_paused_time();
+        if current_status == "paused" {
+            // Resuming: calculate how long we were paused
+            if let Ok(mut pause_guard) = TRACKING_PAUSE_START.lock() {
+                if let Some(pause_start) = pause_guard.take() {
+                    let paused_for = (Local::now() - pause_start).num_seconds();
+                    add_paused_time(paused_for);
+                }
+            }
+        } else {
+            // Starting fresh
+            set_tracking_start_time(Some(Local::now()));
+            reset_paused_time();
+        }
     } else if val == 2 && current_status == "running" {
-        let elapsed = get_tracking_elapsed_seconds();
-        add_paused_time(elapsed);
+        // Pausing: record the start of the pause
+        if let Ok(mut pause_guard) = TRACKING_PAUSE_START.lock() {
+            *pause_guard = Some(Local::now());
+        }
     } else if val == 0 {
         set_tracking_start_time(None);
         reset_paused_time();
+        if let Ok(mut pause_guard) = TRACKING_PAUSE_START.lock() {
+            *pause_guard = None;
+        }
     }
 
     TRACKING_STATE.store(val, Ordering::SeqCst);
 }
 
 #[derive(Clone)]
-struct ActiveWindowInfo {
-    app_name: String,
-    window_title: String,
-    start_time: DateTime<Local>,
+pub struct ActiveWindowInfo {
+    pub app_name: String,
+    pub window_title: String,
+    pub start_time: DateTime<Local>,
 }
 
 /// Known browser process names
@@ -250,7 +292,6 @@ fn extract_url_from_title(app_name: &str, title: &str, window_id: &str) -> Optio
 }
 
 pub fn start_tracking(app: AppHandle) {
-    let current_window: Arc<Mutex<Option<ActiveWindowInfo>>> = Arc::new(Mutex::new(None));
     let last_input_time: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now()));
     let idle_logged: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
@@ -351,29 +392,30 @@ pub fn start_tracking(app: AppHandle) {
             let state = TRACKING_STATE.load(Ordering::SeqCst);
             if state == 0 || state == 2 {
                 // Stopped or Paused: flush current window if any
-                let mut current = current_window.lock().unwrap();
-                if let Some(cw) = current.take() {
-                    let now = Local::now();
-                    let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
-                    if duration > 0 {
-                        if let Ok(conn) = Connection::open(&db_path) {
-                            let status = if state == 2 { "paused" } else { "active" };
-                            let _ = conn.execute(
-                                "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                                (
-                                    Uuid::new_v4().to_string(),
-                                    get_active_user_id(),
-                                    &cw.app_name,
-                                    &cw.window_title,
-                                    &cw.start_time.to_rfc3339(),
-                                    &now.to_rfc3339(),
-                                    &duration,
-                                    &now.to_rfc3339(),
-                                    &now.to_rfc3339(),
-                                    status,
-                                ),
-                            );
+                if let Ok(mut current) = CURRENT_WINDOW.lock() {
+                    if let Some(cw) = current.take() {
+                        let now = Local::now();
+                        let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
+                        if duration > 0 {
+                            if let Ok(conn) = Connection::open(&db_path) {
+                                let status = if state == 2 { "paused" } else { "active" };
+                                let _ = conn.execute(
+                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    (
+                                        Uuid::new_v4().to_string(),
+                                        get_active_user_id(),
+                                        &cw.app_name,
+                                        &cw.window_title,
+                                        &cw.start_time.to_rfc3339(),
+                                        &now.to_rfc3339(),
+                                        &duration,
+                                        &now.to_rfc3339(),
+                                        &now.to_rfc3339(),
+                                        status,
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
@@ -454,63 +496,65 @@ pub fn start_tracking(app: AppHandle) {
 
             match active_window_result {
                 Ok(window) => {
-                    let mut current = current_window.lock().unwrap();
-                    let is_different = match &*current {
-                        Some(cw) => {
-                            cw.app_name != window.app_name || cw.window_title != window.title
-                        }
-                        None => true,
-                    };
+                    // println!("Tracking Loop - Active: {} ({})", window.title, window.app_name);
+                    if let Ok(mut current) = CURRENT_WINDOW.lock() {
+                        let is_different = match &*current {
+                            Some(cw) => {
+                                cw.app_name != window.app_name || cw.window_title != window.title
+                            }
+                            None => true,
+                        };
 
-                    let now = Local::now();
-                    if is_different {
-                        if let Some(cw) = current.take() {
-                            let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
-                            if duration > 0 {
+                        let now = Local::now();
+                        if is_different {
+                            if let Some(cw) = current.take() {
+                                let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
+                                if duration > 0 {
+                                    if let Ok(conn) = Connection::open(&db_path) {
+                                        let status = if cw.window_title == "Break Time" { "paused" } else { "active" };
+                                        let _ = conn.execute(
+                                            "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
+                                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                            (
+                                                Uuid::new_v4().to_string(),
+                                                get_active_user_id(),
+                                                &cw.app_name,
+                                                &cw.window_title,
+                                                &cw.start_time.to_rfc3339(),
+                                                &now.to_rfc3339(),
+                                                &duration,
+                                                &now.to_rfc3339(),
+                                                &now.to_rfc3339(),
+                                                status,
+                                            ),
+                                        );
+
+                                    }
+                                }
+                            }
+
+                            let new_info = ActiveWindowInfo {
+                                app_name: window.app_name.clone(),
+                                window_title: window.title.clone(),
+                                start_time: now,
+                            };
+
+                            if let Some(url_context) = extract_url_from_title(&new_info.app_name, &new_info.window_title, &window.window_id) {
                                 if let Ok(conn) = Connection::open(&db_path) {
-                                    let status = if cw.window_title == "Break Time" { "paused" } else { "active" };
                                     let _ = conn.execute(
-                                        "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
-                                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                        "INSERT INTO activity_events (id, user_id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, ?3, ?4, ?4, NULL, 'active')",
                                         (
                                             Uuid::new_v4().to_string(),
                                             get_active_user_id(),
-                                            &cw.app_name,
-                                            &cw.window_title,
-                                            &cw.start_time.to_rfc3339(),
-                                            &now.to_rfc3339(),
-                                            &duration,
-                                            &now.to_rfc3339(),
-                                            &now.to_rfc3339(),
-                                            status,
+                                            format!("url:{}", url_context),
+                                            now.to_rfc3339(),
                                         ),
                                     );
-
                                 }
                             }
+
+                            *current = Some(new_info);
                         }
-
-                        let new_info = ActiveWindowInfo {
-                            app_name: window.app_name.clone(),
-                            window_title: window.title.clone(),
-                            start_time: now,
-                        };
-
-                        if let Some(url_context) = extract_url_from_title(&new_info.app_name, &new_info.window_title, &window.window_id) {
-                            if let Ok(conn) = Connection::open(&db_path) {
-                                let _ = conn.execute(
-                                    "INSERT INTO activity_events (id, user_id, type, timestamp, created_at, synced_at, activity_status) VALUES (?1, ?2, ?3, ?4, ?4, NULL, 'active')",
-                                    (
-                                        Uuid::new_v4().to_string(),
-                                        get_active_user_id(),
-                                        format!("url:{}", url_context),
-                                        now.to_rfc3339(),
-                                    ),
-                                );
-                            }
-                        }
-
-                        *current = Some(new_info);
                     }
                 }
                 Err(_) => {}

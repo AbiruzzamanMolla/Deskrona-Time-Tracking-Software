@@ -14,6 +14,29 @@ pub fn get_db_path(app: &AppHandle) -> PathBuf {
     path
 }
 
+pub fn get_today_active_seconds(app: &AppHandle) -> Result<i64> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    // Set busy timeout to prevent database locks from returning 0
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+    
+    let mut user_id = crate::tracking::get_active_user_id();
+    if user_id.is_empty() {
+        user_id = "default_user".to_string();
+    }
+
+    let total_active: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time) = date('now', 'localtime')",
+        params![user_id],
+        |row| row.get(0),
+    ).unwrap_or(0);
+    
+    // Add only the unlogged duration of the current active window
+    let live_seconds = crate::tracking::get_current_window_duration();
+
+    Ok(total_active + live_seconds)
+}
+
 pub fn init_db(app: &AppHandle) -> Result<()> {
     let db_path = get_db_path(app);
     let conn = Connection::open(&db_path)?;
@@ -28,10 +51,16 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
             theme TEXT NOT NULL DEFAULT 'system',
             auto_start_on_boot BOOLEAN NOT NULL DEFAULT 0,
             screenshot_interval INTEGER NOT NULL DEFAULT 10,
+            is_screenshot_enabled BOOLEAN NOT NULL DEFAULT 1,
             screenshot_location TEXT NOT NULL DEFAULT '',
             backup_frequency TEXT NOT NULL DEFAULT 'never',
             backup_location TEXT NOT NULL DEFAULT '',
             idle_threshold INTEGER NOT NULL DEFAULT 5,
+            overlay_enabled BOOLEAN NOT NULL DEFAULT 0,
+            overlay_always_on_top BOOLEAN NOT NULL DEFAULT 1,
+            overlay_click_through BOOLEAN NOT NULL DEFAULT 0,
+            overlay_position_x INTEGER NOT NULL DEFAULT -1,
+            overlay_position_y INTEGER NOT NULL DEFAULT 20,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             synced_at TEXT
@@ -106,15 +135,37 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
     )?;
 
     // Migrations for existing databases
+    // We check column existence before adding them to avoid errors or ignored failures
+    let table_info: Vec<String> = {
+        let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let migrations = [
+        ("idle_threshold", "ALTER TABLE settings ADD COLUMN idle_threshold INTEGER NOT NULL DEFAULT 5"),
+        ("is_screenshot_enabled", "ALTER TABLE settings ADD COLUMN is_screenshot_enabled INTEGER NOT NULL DEFAULT 1"),
+        ("overlay_enabled", "ALTER TABLE settings ADD COLUMN overlay_enabled INTEGER NOT NULL DEFAULT 1"),
+        ("overlay_always_on_top", "ALTER TABLE settings ADD COLUMN overlay_always_on_top INTEGER NOT NULL DEFAULT 1"),
+        ("overlay_click_through", "ALTER TABLE settings ADD COLUMN overlay_click_through INTEGER NOT NULL DEFAULT 0"),
+        ("overlay_position_x", "ALTER TABLE settings ADD COLUMN overlay_position_x INTEGER NOT NULL DEFAULT -1"),
+        ("overlay_position_y", "ALTER TABLE settings ADD COLUMN overlay_position_y INTEGER NOT NULL DEFAULT 20"),
+        ("deleted_at", "ALTER TABLE settings ADD COLUMN deleted_at TEXT"),
+    ];
+
+    for (col, sql) in migrations {
+        if !table_info.contains(&col.to_string()) {
+            let _ = conn.execute(sql, []);
+        }
+    }
+
+    // Other table migrations
     let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN status TEXT NOT NULL DEFAULT 'active'", []);
     let _ = conn.execute("ALTER TABLE activity_events ADD COLUMN activity_status TEXT NOT NULL DEFAULT 'active'", []);
     let _ = conn.execute("ALTER TABLE activity_events ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default_user'", []);
     let _ = conn.execute("CREATE TABLE IF NOT EXISTS app_categories (app_name TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'neutral')", []);
-    let _ = conn.execute("ALTER TABLE settings ADD COLUMN idle_threshold INTEGER NOT NULL DEFAULT 5", []);
-    let _ = conn.execute("ALTER TABLE settings ADD COLUMN is_screenshot_enabled INTEGER NOT NULL DEFAULT 1", []);
-
+    
     // Phase 6: Sync-ready schema - Add deleted_at for soft deletes
-    let _ = conn.execute("ALTER TABLE settings ADD COLUMN deleted_at TEXT", []);
     let _ = conn.execute("ALTER TABLE sessions ADD COLUMN deleted_at TEXT", []);
     let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN deleted_at TEXT", []);
     let _ = conn.execute("ALTER TABLE app_usage ADD COLUMN deleted_at TEXT", []);
@@ -131,10 +182,13 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
         conflict_resolution TEXT
     )", []);
 
+    // Ensure overlay is enabled for existing users who just got the column
+    let _ = conn.execute("UPDATE settings SET overlay_enabled = 1 WHERE overlay_enabled = 0", []);
+
     // Insert default settings if none exists
     conn.execute(
         "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
-         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 0, 0, 0, -1, 20, ?3, ?3
+         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 0, 100, 100, ?3, ?3
          WHERE NOT EXISTS (SELECT 1 FROM settings WHERE user_id = ?2)",
         (
             uuid::Uuid::new_v4().to_string(),
@@ -166,8 +220,12 @@ pub struct Settings {
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, -1), COALESCE(overlay_position_y, 20) FROM settings WHERE user_id = 'default_user' LIMIT 1")?;
-    let settings = stmt.query_row([], |row| {
+    let user_id = crate::tracking::get_active_user_id();
+    
+    // Try to get settings for the active user
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100) FROM settings WHERE user_id = ?1 LIMIT 1")?;
+    
+    let result = stmt.query_row(params![user_id], |row| {
         Ok(Settings {
             language: row.get(0)?,
             theme: row.get(1)?,
@@ -184,8 +242,43 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             overlay_position_x: row.get(12)?,
             overlay_position_y: row.get(13)?,
         })
-    })?;
-    Ok(settings)
+    });
+
+    match result {
+        Ok(s) => Ok(s),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            // Create default settings for this user
+            let now = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
+                 VALUES (?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 0, 100, 100, ?3, ?3)",
+                (
+                    uuid::Uuid::new_v4().to_string(),
+                    &user_id,
+                    &now,
+                ),
+            )?;
+            
+            // Return defaults
+            Ok(Settings {
+                language: "en".to_string(),
+                theme: "system".to_string(),
+                auto_start_on_boot: false,
+                screenshot_interval: 10,
+                screenshot_location: "".to_string(),
+                backup_frequency: "never".to_string(),
+                backup_location: "".to_string(),
+                idle_threshold: 5,
+                is_screenshot_enabled: true,
+                overlay_enabled: true,
+                overlay_always_on_top: true,
+                overlay_click_through: false,
+                overlay_position_x: 100,
+                overlay_position_y: 100,
+            })
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
@@ -209,7 +302,7 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             overlay_position_x = ?13,
             overlay_position_y = ?14,
             updated_at = ?15 
-        WHERE user_id = 'default_user'",
+        WHERE user_id = ?16",
         params![
             settings.language,
             settings.theme,
@@ -225,8 +318,20 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.overlay_click_through as i32,
             settings.overlay_position_x,
             settings.overlay_position_y,
-            now
+            now,
+            crate::tracking::get_active_user_id()
         ],
+    )?;
+    Ok(())
+}
+
+pub fn update_settings_overlay_position(app: &AppHandle, x: i32, y: i32) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE settings SET overlay_position_x = ?1, overlay_position_y = ?2, updated_at = ?3 WHERE user_id = ?4",
+        params![x, y, now, crate::tracking::get_active_user_id()],
     )?;
     Ok(())
 }
@@ -351,11 +456,9 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     // Total active seconds today
-    let total_active: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time) = ?2",
-        params![user_id, today],
-        |row| row.get(0),
-    )?;
+    let total_active: i64 = get_today_active_seconds(app)?;
+    
+    // Idle time: count pairs of idle_start/idle_end events today
 
     // Idle time: count pairs of idle_start/idle_end events today
     let idle_events: Vec<(String, String)> = {

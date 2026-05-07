@@ -14,113 +14,222 @@
     .overlay-container {
       width: 100vw;
       height: 100vh;
-      background: linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%);
-      border: 1px solid #3a5a7c;
+      background: rgba(13, 27, 42, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(58, 90, 124, 0.5);
       border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      cursor: move;
+      user-select: none;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+    .status-bar {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+      padding: 0 4px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      background: #ccc;
+    }
+    .status-dot.running { background: #4caf50; box-shadow: 0 0 8px #4caf50; }
+    .status-dot.paused { background: #ff9800; box-shadow: 0 0 8px #ff9800; }
+    .status-dot.stopped { background: #f44336; }
+
+    .status-label {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .main-row {
+      width: 100%;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
-      cursor: move;
-      user-select: none;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    }
-    .overlay-container:active {
-      cursor: moving;
+      gap: 10px;
     }
     .time-display {
       color: #fff;
-      font-size: 18px;
-      font-weight: 600;
+      font-size: 22px;
+      font-weight: 700;
       font-variant-numeric: tabular-nums;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+      text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+      flex-grow: 1;
     }
     .control-btn {
       -webkit-app-region: no-drag;
-      background: rgba(255, 255, 255, 0.15);
-      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
       cursor: pointer;
-      font-size: 14px;
-      padding: 6px 16px;
+      font-size: 12px;
+      padding: 4px 12px;
       border-radius: 4px;
       transition: all 0.2s;
       color: #fff;
-      font-weight: 500;
-      min-width: 70px;
+      font-weight: 600;
+      min-width: 65px;
+      text-transform: uppercase;
     }
     .control-btn:hover {
-      background: rgba(255, 255, 255, 0.25);
-      border-color: rgba(255, 255, 255, 0.5);
-    }
-    .control-btn:active {
-      background: rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.4);
     }
   </style>
 </head>
 <body>
   <div class="overlay-container" id="overlay">
-    <span class="time-display" id="timeDisplay">00:00:00</span>
-    <button class="control-btn" id="controlBtn">Pause</button>
+    <div class="status-bar">
+      <div style="display: flex; align-items: center;">
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-label" id="statusLabel">Stopped</span>
+      </div>
+      <span class="status-label" style="font-size: 9px; opacity: 0.5;">TODAY</span>
+    </div>
+    <div class="main-row">
+      <span class="time-display" id="timeDisplay">00:00:00</span>
+      <button class="control-btn" id="controlBtn">Start</button>
+    </div>
   </div>
   <script>
-    let currentStatus = 'running';
-    let isDragging = false;
-    let dragOffset = { x: 0, y: 0 };
+    const { invoke } = window.__TAURI__.core;
+    const { listen } = window.__TAURI__.event;
 
-    function updateOverlayTime(time, status) {
-      document.getElementById('timeDisplay').textContent = time;
-      currentStatus = status;
+    let currentStatus = 'stopped';
+
+    async function init() {
+      console.log('Overlay initialized');
       const btn = document.getElementById('controlBtn');
-      if (status === 'running') {
-        btn.textContent = 'Pause';
-      } else if (status === 'paused') {
-        btn.textContent = 'Resume';
+      const dot = document.getElementById('statusDot');
+      const label = document.getElementById('statusLabel');
+      const timeDisplay = document.getElementById('timeDisplay');
+
+      let timerInterval = null;
+      let currentSeconds = 0;
+
+      function updateUI(status, time) {
+        console.log('Updating UI:', status, time);
+        if (time) {
+          timeDisplay.textContent = time;
+          // Parse time string (H:MM:SS or HH:MM:SS) back to seconds for the local timer
+          const parts = time.split(':').map(Number);
+          if (parts.length === 3) {
+            currentSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+          }
+        }
+        
+        currentStatus = status;
+        dot.className = 'status-dot ' + status;
+        
+        if (status === 'running') {
+          label.textContent = 'Active';
+          btn.textContent = 'Pause';
+          startLocalTimer();
+        } else if (status === 'paused') {
+          label.textContent = 'Paused';
+          btn.textContent = 'Resume';
+          stopLocalTimer();
+        } else {
+          label.textContent = 'Stopped';
+          btn.textContent = 'Start';
+          dot.className = 'status-dot stopped';
+          stopLocalTimer();
+        }
       }
+
+      function startLocalTimer() {
+        if (timerInterval) return;
+        timerInterval = setInterval(() => {
+          currentSeconds++;
+          const h = Math.floor(currentSeconds / 3600);
+          const m = Math.floor((currentSeconds % 3600) / 60);
+          const s = currentSeconds % 60;
+          timeDisplay.textContent = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }, 1000);
+      }
+
+      function stopLocalTimer() {
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+      }
+
+      // Initial status
+      try {
+        const status = await invoke('cmd_get_tracking');
+        // Also fetch initial time to avoid 00:00:00
+        const stats = await invoke('cmd_get_dashboard_data');
+        const initialTime = stats.total_active_seconds_formatted || '0:00:00';
+        updateUI(status, initialTime);
+      } catch (e) {
+        console.error('Failed to get initial status:', e);
+      }
+
+      // Listen for updates from backend
+      await listen('update-overlay', (event) => {
+        const { time, status } = event.payload;
+        updateUI(status, time);
+      });
+      
+      // Also listen for status changes directly to be snappier
+      await listen('tracking-status-changed', (event) => {
+        updateUI(event.payload);
+      });
+
+      btn.addEventListener('click', async () => {
+        let newStatus;
+        if (currentStatus === 'running') {
+          newStatus = 'paused';
+        } else if (currentStatus === 'paused') {
+          newStatus = 'running';
+        } else {
+          newStatus = 'running'; // Start if stopped
+        }
+        
+        try {
+          await invoke('cmd_set_tracking', { status: newStatus });
+          // The updateUI will be called by the 'tracking-status-changed' listener
+          // but we can update it immediately for responsiveness
+          updateUI(newStatus);
+        } catch (e) {
+          console.error('Failed to set tracking:', e);
+        }
+      });
     }
+
+    init();
 
     // Drag functionality
     const overlay = document.getElementById('overlay');
     
     overlay.addEventListener('mousedown', async (e) => {
-      if (e.target.classList.contains('control-btn')) return;
-      isDragging = true;
-      const { invoke } = window.__TAURI__.core;
+      // Prevent drag when clicking the button
+      if (e.target.closest('.control-btn')) return;
+      
       try {
         await invoke('start_drag_overlay');
-      } catch(e) {}
-    });
-
-    document.addEventListener('mousemove', async (e) => {
-      if (!isDragging) return;
-      const { invoke } = window.__TAURI__.core;
-      try {
-        await invoke('move_overlay_window', { x: e.screenX - 100, y: e.screenY - 30 });
-      } catch(e) {}
+      } catch(e) {
+        console.error('Drag failed:', e);
+      }
     });
 
     document.addEventListener('mouseup', async () => {
-      if (!isDragging) return;
-      isDragging = false;
-      const { invoke } = window.__TAURI__.core;
       try {
         await invoke('end_drag_overlay');
       } catch(e) {}
     });
-
-    document.getElementById('controlBtn').addEventListener('click', async () => {
-      try {
-        const { invoke } = window.__TAURI__.core;
-        if (currentStatus === 'running') {
-          await invoke('cmd_set_tracking', { status: 'paused' });
-        } else if (currentStatus === 'paused') {
-          await invoke('cmd_set_tracking', { status: 'running' });
-        }
-      } catch (e) {
-        console.error('Failed to toggle tracking:', e);
-      }
-    });
-
-    window.updateOverlayTime = updateOverlayTime;
   </script>
 </body>
 </html>

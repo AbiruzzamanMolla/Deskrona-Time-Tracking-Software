@@ -4,70 +4,47 @@ mod backup;
 mod config;
 mod auth;
 
-use std::sync::atomic::AtomicBool;
-use std::thread;
-use std::time::Duration;
 use tauri_plugin_autostart::ManagerExt;
 use serde::Serialize;
 use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent, TrayIcon},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
 
 static TRAY_HANDLE: std::sync::OnceLock<tauri::tray::TrayIcon> = std::sync::OnceLock::new();
-static UPDATE_TOOLTIP: AtomicBool = AtomicBool::new(true);
 
 #[tauri::command]
 fn show_overlay_window(app: tauri::AppHandle, x: i32, y: i32, always_on_top: bool, click_through: bool) -> Result<(), String> {
-    println!("show_overlay_window called: x={}, y={}, always_on_top={}, click_through={}", x, y, always_on_top, click_through);
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
         let _ = window.set_always_on_top(always_on_top);
         let _ = window.set_ignore_cursor_events(click_through);
         let _ = window.show();
         let _ = window.set_focus();
-        println!("Overlay window shown successfully");
         Ok(())
     } else {
-        println!("Overlay window not found");
         Err("Overlay window not found".to_string())
     }
 }
 
 #[tauri::command]
 fn hide_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
-    println!("hide_overlay_window called");
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.hide();
-        println!("Overlay window hidden successfully");
         Ok(())
     } else {
-        println!("Overlay window not found for hiding");
         Err("Overlay window not found".to_string())
     }
 }
 
 #[tauri::command]
 fn update_overlay_time(app: tauri::AppHandle, time: String, status: String) -> Result<(), String> {
-    println!("update_overlay_time called: time={}, status={}", time, status);
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.eval(&format!(
             "if(window.updateOverlayTime) window.updateOverlayTime('{}', '{}');",
             time, status
         ));
-        println!("Overlay time updated successfully");
-        Ok(())
-    } else {
-        println!("Overlay window not found for time update");
-        Err("Overlay window not found".to_string())
-    }
-}
-
-#[tauri::command]
-fn move_overlay_window(app: tauri::AppHandle, x: i32, y: i32) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("overlay") {
-        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
         Ok(())
     } else {
         Err("Overlay window not found".to_string())
@@ -75,20 +52,23 @@ fn move_overlay_window(app: tauri::AppHandle, x: i32, y: i32) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn start_drag_overlay(app: tauri::AppHandle) -> Result<(), String> {
-    println!("Start drag overlay");
-    Ok(())
+fn start_drag_overlay(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn end_drag_overlay(app: tauri::AppHandle) -> Result<(), String> {
-    println!("End drag overlay");
-    Ok(())
+fn move_overlay_window(window: tauri::WebviewWindow, x: i32, y: i32) -> Result<(), String> {
+    window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
+        .map_err(|e| e.to_string())
 }
 
-
-
-// ─── Existing Commands ────────────────────────────────────────────
+#[tauri::command]
+fn end_drag_overlay(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if let Ok(pos) = window.outer_position() {
+        let _ = db::update_settings_overlay_position(&app, pos.x, pos.y);
+    }
+    Ok(())
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -143,9 +123,28 @@ fn cmd_get_dashboard_data(app_handle: tauri::AppHandle) -> Result<db::DashboardD
 }
 
 #[tauri::command]
-fn cmd_set_tracking(status: String) -> Result<(), String> {
+fn cmd_set_tracking(app_handle: tauri::AppHandle, status: String) -> Result<(), String> {
     tracking::set_tracking_status(&status);
+    let _ = app_handle.emit("tracking-status-changed", &status);
     Ok(())
+}
+
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let status = tracking::get_tracking_status();
+    let total_seconds = db::get_today_active_seconds(app).unwrap_or(0);
+    let time_str = tracking::format_duration(total_seconds);
+
+    let status_text = format!("Status: {} ({})", status, time_str);
+    let status_item = MenuItem::with_id(app, "status", &status_text, false, None::<&str>)?;
+    let dashboard_i = MenuItem::with_id(app, "dashboard", "Show Dashboard", true, None::<&str>)?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let start_i = MenuItem::with_id(app, "start", "Start Tracking", true, None::<&str>)?;
+    let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
+    let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+    Menu::with_items(app, &[&status_item, &dashboard_i, &sep1, &start_i, &pause_i, &stop_i, &sep2, &quit_i])
 }
 
 #[tauri::command]
@@ -162,23 +161,8 @@ pub struct TrayInfo {
 #[tauri::command]
 fn cmd_get_tray_info(app_handle: tauri::AppHandle) -> Result<TrayInfo, String> {
     let status = tracking::get_tracking_status().to_string();
-    let elapsed = if status == "running" {
-        if let Ok(Some(session)) = db::get_active_session(&app_handle) {
-            let start = chrono::DateTime::parse_from_rfc3339(&session.start_time)
-                .map_err(|e| e.to_string())?;
-            let now = chrono::Local::now();
-            let duration = now.signed_duration_since(start);
-            let secs = duration.num_seconds();
-            let hours = secs / 3600;
-            let mins = (secs % 3600) / 60;
-            let secs = secs % 60;
-            format!("{:02}:{:02}:{:02}", hours, mins, secs)
-        } else {
-            "00:00:00".to_string()
-        }
-    } else {
-        "00:00:00".to_string()
-    };
+    let total_seconds = db::get_today_active_seconds(&app_handle).unwrap_or(0);
+    let elapsed = tracking::format_duration(total_seconds);
     Ok(TrayInfo { status, elapsed })
 }
 
@@ -210,33 +194,23 @@ fn cmd_update_app_category(app_handle: tauri::AppHandle, app_name: String, categ
     db::update_app_category(&app_handle, &app_name, &category).map_err(|e| e.to_string())
 }
 
-// ─── Phase 8: App Config Commands ────────────────────────────────
-
-/// Returns the persisted app config (mode + setup_done flag).
 #[tauri::command]
 fn cmd_get_app_config(app_handle: tauri::AppHandle) -> config::AppConfig {
     config::load_config(&app_handle)
 }
 
-/// Persists the app config. Called when the wizard completes.
 #[tauri::command]
 fn cmd_save_app_config(app_handle: tauri::AppHandle, cfg: config::AppConfig) -> Result<(), String> {
     config::save_config(&app_handle, &cfg)
 }
 
-/// Reset app: delete config file + wipe auth tables. Frontend will re-run wizard.
 #[tauri::command]
 fn cmd_reset_app(app_handle: tauri::AppHandle) -> Result<(), String> {
-    // 1. Delete config
     config::delete_config(&app_handle)?;
-    // 2. Reset auth schema (drops + recreates tables)
     auth::init_auth_schema(&app_handle).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-// ─── Phase 8: Auth Commands ───────────────────────────────────────
-
-/// First-time: register company + admin user.
 #[tauri::command]
 fn cmd_register_company(
     app_handle: tauri::AppHandle,
@@ -245,7 +219,6 @@ fn cmd_register_company(
     auth::register_company(&app_handle, payload)
 }
 
-/// Login with username + password.
 #[tauri::command]
 fn cmd_login(
     app_handle: tauri::AppHandle,
@@ -254,7 +227,6 @@ fn cmd_login(
     auth::login(&app_handle, payload)
 }
 
-/// Validate session token, returns current user.
 #[tauri::command]
 fn cmd_validate_session(
     app_handle: tauri::AppHandle,
@@ -263,13 +235,11 @@ fn cmd_validate_session(
     auth::validate_session(&app_handle, &token)
 }
 
-/// Logout / invalidate token.
 #[tauri::command]
 fn cmd_logout(app_handle: tauri::AppHandle, token: String) -> Result<(), String> {
     auth::logout(&app_handle, &token)
 }
 
-/// Admin: list all users in company.
 #[tauri::command]
 fn cmd_get_company_users(
     app_handle: tauri::AppHandle,
@@ -278,7 +248,6 @@ fn cmd_get_company_users(
     auth::get_company_users(&app_handle, &company_id)
 }
 
-/// Admin: create a new user under this company.
 #[tauri::command]
 fn cmd_create_user(
     app_handle: tauri::AppHandle,
@@ -288,7 +257,6 @@ fn cmd_create_user(
     auth::create_user(&app_handle, &company_id, payload)
 }
 
-/// Admin: aggregated productivity stats.
 #[tauri::command]
 fn cmd_get_admin_stats(
     app_handle: tauri::AppHandle,
@@ -296,8 +264,6 @@ fn cmd_get_admin_stats(
 ) -> Result<Vec<auth::UserProductivityStat>, String> {
     auth::get_admin_stats(&app_handle, &company_id)
 }
-
-// ─── Admin: Per-User Data Commands ──────────────────────────────────
 
 #[tauri::command]
 fn cmd_get_user_screenshots(
@@ -362,22 +328,16 @@ fn cmd_get_all_app_categories(app_handle: tauri::AppHandle) -> Result<Vec<db::Ap
     db::get_all_app_categories(&app_handle).map_err(|e| e.to_string())
 }
 
-// ─── Tauri Setup ──────────────────────────────────────────────────
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--flag"])))
         .setup(|app| {
-            // Initialize database
             db::init_db(app.handle()).expect("Failed to initialize database");
-
-            // Initialize auth schema (idempotent)
             auth::init_auth_schema(app.handle()).expect("Failed to initialize auth schema");
 
-            // Sync autostart state from settings
             if let Ok(settings) = db::get_settings(app.handle()) {
                 let manager = app.handle().autolaunch();
                 if settings.auto_start_on_boot {
@@ -387,43 +347,11 @@ pub fn run() {
                 }
             }
 
-            // Start background tracking
             tracking::start_tracking(app.handle().clone());
-
-            // Start backup scheduler
             backup::start_backup_scheduler(app.handle().clone());
 
-            let app_handle = app.handle().clone();
+            let menu = build_tray_menu(app.handle())?;
 
-            fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-                let status = tracking::get_tracking_status();
-                let elapsed = if status == "running" {
-                    if let Ok(Some(session)) = db::get_active_session(app) {
-                        if let Ok(start) = chrono::DateTime::parse_from_rfc3339(&session.start_time) {
-                            let now = chrono::Local::now();
-                            let duration = now.signed_duration_since(start);
-                            let secs = duration.num_seconds();
-                            let hours = secs / 3600;
-                            let mins = (secs % 3600) / 60;
-                            let secs = secs % 60;
-                            format!("{:02}:{:02}:{:02}", hours, mins, secs)
-                        } else { "00:00:00".to_string() }
-                    } else { "00:00:00".to_string() }
-                } else { "00:00:00".to_string() };
-
-                let status_text = format!("Status: {} ({})", status, elapsed);
-                let status_item = MenuItem::with_id(app, "status", &status_text, false, None::<&str>)?;
-                let start_i = MenuItem::with_id(app, "start", "Start Tracking", true, None::<&str>)?;
-                let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
-                let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
-                let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-
-                Menu::with_items(app, &[&status_item, &start_i, &pause_i, &stop_i, &quit_i])
-            }
-
-            let menu = build_tray_menu(&app_handle)?;
-
-            // Hide to tray instead of closing when user clicks X
             let main_window = app.get_webview_window("main").unwrap();
             let window_clone = main_window.clone();
             main_window.on_window_event(move |event| {
@@ -434,14 +362,18 @@ pub fn run() {
             });
 
             let status_tooltip = format!("Deskrona - Status: {}", tracking::get_tracking_status());
-            println!("Creating tray icon with default icon...");
-
-            let tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+            
+            let mut tray_builder = TrayIconBuilder::new()
                 .tooltip(&status_tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "dashboard" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
                     "start" => {
                         crate::tracking::set_tracking_status("running");
                         let _ = app.emit("tracking-status-changed", "running");
@@ -472,26 +404,85 @@ pub fn run() {
                         }
                     }
                     _ => {}
-                })
-                .build(app)?;
-            println!("Tray icon created successfully!");
+                });
 
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+
+            let tray = tray_builder.build(app)?;
             let _ = TRAY_HANDLE.set(tray);
 
-            // Background thread to update tray tooltip with elapsed time
+            let app_handle_bg = app.handle().clone();
             std::thread::spawn(move || {
+                let mut last_shown = false;
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     let status = tracking::get_tracking_status();
-                    if status == "running" || status == "paused" {
-                        let time = tracking::get_tracking_formatted_time();
-                        let tooltip = if status == "running" {
-                            format!("Deskrona - Running: {}", time)
+                    let total_seconds = db::get_today_active_seconds(&app_handle_bg).unwrap_or(0);
+                    let time_str = tracking::format_duration(total_seconds);
+
+                    let tooltip = match status {
+                        "running" => format!("Deskrona - Running Today: {}", time_str),
+                        "paused" => format!("Deskrona - Paused (Today: {})", time_str),
+                        _ => format!("Deskrona - Stopped (Today: {})", time_str),
+                    };
+                    
+                    if let Some(tray) = TRAY_HANDLE.get() {
+                        let _ = tray.set_tooltip(Some(&tooltip));
+                        if let Ok(new_menu) = build_tray_menu(&app_handle_bg) {
+                            let _ = tray.set_menu(Some(new_menu));
+                        }
+                    }
+
+                    if let Ok(settings) = db::get_settings(&app_handle_bg) {
+                        // Force hide overlay for now as requested
+                        if false && settings.overlay_enabled {
+                            if let Some(window) = app_handle_bg.get_webview_window("overlay") {
+                                // Apply settings
+                                let _ = window.set_always_on_top(settings.overlay_always_on_top);
+                                let _ = window.set_ignore_cursor_events(settings.overlay_click_through);
+                                
+                                #[derive(Clone, Serialize)]
+                                struct OverlayUpdate {
+                                    time: String,
+                                    status: String,
+                                }
+                                let _ = window.emit("update-overlay", OverlayUpdate {
+                                    time: time_str,
+                                    status: status.to_string(),
+                                });
+                                
+                                if !last_shown {
+                                    let _ = window.show();
+                                    last_shown = true;
+                                }
+                            } else {
+                                // Create overlay window
+                                let _ = tauri::WebviewWindowBuilder::new(
+                                    &app_handle_bg,
+                                    "overlay",
+                                    tauri::WebviewUrl::App("overlay.html".into())
+                                )
+                                .title("Deskrona Overlay")
+                                .decorations(false)
+                                .transparent(true)
+                                .always_on_top(settings.overlay_always_on_top)
+                                .resizable(false)
+                                .inner_size(260.0, 70.0)
+                                .position(settings.overlay_position_x as f64, settings.overlay_position_y as f64)
+                                .build();
+                                last_shown = true;
+                            }
                         } else {
-                            format!("Deskrona - Paused: {}", time)
-                        };
-                        if let Some(tray) = TRAY_HANDLE.get() {
-                            let _ = tray.set_tooltip(Some(&tooltip));
+                            // Overlay disabled in settings - ensure it's hidden
+                            if let Some(window) = app_handle_bg.get_webview_window("overlay") {
+                                let is_visible = window.is_visible().unwrap_or(false);
+                                if is_visible {
+                                    let _ = window.hide();
+                                }
+                            }
+                            last_shown = false;
                         }
                     }
                 }
@@ -511,6 +502,9 @@ pub fn run() {
             cmd_get_dashboard_data,
             cmd_set_tracking,
             cmd_get_tracking,
+            start_drag_overlay,
+            move_overlay_window,
+            end_drag_overlay,
             cmd_get_tray_info,
             cmd_get_time_logs_range,
             cmd_get_urls_range,
@@ -519,7 +513,6 @@ pub fn run() {
             cmd_update_app_category,
             backup::cmd_export_db,
             backup::cmd_import_db,
-            // Phase 8
             cmd_get_app_config,
             cmd_save_app_config,
             cmd_reset_app,
@@ -530,47 +523,16 @@ pub fn run() {
             cmd_get_company_users,
             cmd_create_user,
             cmd_get_admin_stats,
-            // Admin per-user
             cmd_get_user_screenshots,
             cmd_get_user_time_logs,
             cmd_get_user_activity,
             cmd_get_user_input_stats,
             cmd_get_user_urls,
-cmd_get_all_app_categories,
+            cmd_get_all_app_categories,
             show_overlay_window,
             hide_overlay_window,
             update_overlay_time,
-            move_overlay_window,
-            start_drag_overlay,
-            end_drag_overlay,
         ])
-        .setup(|app| {
-            // Check if overlay window exists and create hidden if needed
-            let overlay = app.get_webview_window("overlay");
-            if overlay.is_none() {
-                if let Ok(window) = tauri::WebviewWindowBuilder::new(
-                    app,
-                    "overlay",
-                    tauri::WebviewUrl::App("overlay.html".into()),
-                )
-                .title("Deskrona Timer")
-                .inner_size(200.0, 60.0)
-                .decorations(false)
-                .transparent(true)
-                .always_on_top(true)
-                .visible(false)
-                .skip_taskbar(true)
-                .resizable(false)
-                .build()
-                {
-                    println!("Overlay window created successfully");
-                    let _ = window.hide();
-                } else {
-                    println!("Failed to create overlay window");
-                }
-            }
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

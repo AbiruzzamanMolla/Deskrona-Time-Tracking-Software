@@ -149,73 +149,48 @@ const trackingStatus = ref<string>("running");
 const defaultScreenshotDir = ref<string>("");
 const privacyNoticeDismissed = ref(false);
 
-// Overlay state
+// Overlay state managed by Rust background thread
 const overlayEnabled = ref(true);
 const overlayAlwaysOnTop = ref(true);
 const overlayClickThrough = ref(false);
 const overlayPosition = ref({ x: -1, y: 20 });
 const overlayElapsed = ref(0);
-let overlayInterval: ReturnType<typeof setInterval> | null = null;
+let overlayInterval: any = null;
 
 const showOverlay = async () => {
-  console.log("showOverlay called, overlayEnabled:", overlayEnabled.value);
-  if (!overlayEnabled.value) return;
-  // Use stored position, or default to top-right corner (1700, 20)
-  const x = overlayPosition.value.x >= 0 ? overlayPosition.value.x : 1700;
-  const y = overlayPosition.value.y >= 0 ? overlayPosition.value.y : 20;
-  console.log("Showing overlay at:", x, y);
   try {
     await invoke("show_overlay_window", {
-      x,
-      y,
+      x: overlayPosition.value.x,
+      y: overlayPosition.value.y,
       alwaysOnTop: overlayAlwaysOnTop.value,
       clickThrough: overlayClickThrough.value
     });
-    console.log("Overlay shown successfully");
   } catch (e) {
     console.error("Failed to show overlay:", e);
   }
 };
 
 const hideOverlay = async () => {
-  await invoke("hide_overlay_window");
+  try {
+    await invoke("hide_overlay_window");
+  } catch (e) {
+    console.error("Failed to hide overlay:", e);
+  }
 };
 
-const updateOverlayTimer = async () => {
-  if (trackingStatus.value === "running") {
-    overlayElapsed.value++;
-  }
-  const hours = Math.floor(overlayElapsed.value / 3600);
-  const mins = Math.floor((overlayElapsed.value % 3600) / 60);
-  const secs = overlayElapsed.value % 60;
-  const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  await invoke("update_overlay_time", { time: timeStr, status: trackingStatus.value });
+const updateOverlayTimer = () => {
+  // This is now primarily handled by Rust, but we keep the variable for consistency
+  overlayElapsed.value++;
+};
+
+// Overlay time is updated from Rust side via window.updateOverlayTime
+(window as any).updateOverlayTime = (time: string, status: string) => {
+  // If we wanted to sync any local state with overlay time, we could do it here
 };
 
 watch(trackingStatus, async (newStatus) => {
-  console.log("Watcher: tracking status changed to", newStatus, "overlayEnabled:", overlayEnabled.value);
-  if (!overlayEnabled.value) {
-    console.log("Watcher: overlay disabled, skipping");
-    if (overlayInterval) {
-      clearInterval(overlayInterval);
-      overlayInterval = null;
-    }
-    await hideOverlay();
-    return;
-  }
-  if (newStatus === "running" || newStatus === "paused") {
-    await showOverlay();
-    if (newStatus === "running" && !overlayInterval) {
-      overlayElapsed.value = 0;
-      overlayInterval = setInterval(updateOverlayTimer, 1000);
-    }
-  } else {
-    if (overlayInterval) {
-      clearInterval(overlayInterval);
-      overlayInterval = null;
-    }
-    await hideOverlay();
-  }
+  console.log("Watcher: tracking status changed to", newStatus);
+  // Rust background thread will handle overlay visibility based on this status
 });
 
 // ─── Update Check State ─────────────────────────────────────
@@ -425,9 +400,7 @@ const formatTime = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 const updateCategory = async (appName: string, category: string) => {
@@ -663,10 +636,16 @@ const refreshDashboard = async () => {
   try {
     const data = await invoke<DashboardData>("cmd_get_dashboard_data");
     dashboardData.value = data;
+    // Sync the local timer with backend data
+    if (data.total_active_seconds !== undefined) {
+      activeSessionSeconds.value = data.total_active_seconds;
+    }
   } catch (e) {
     console.error("Failed to refresh dashboard:", e);
   }
 };
+
+const loadDashboardData = refreshDashboard;
 
 // ─── Tracking Control ────────────────────────────────────────────
 const loadTrackingStatus = async () => {
@@ -814,27 +793,29 @@ let appInitDone = false;
 const initApp = async () => {
   if (appInitDone) return;
   appInitDone = true;
-  // Load settings FIRST - before showing anything
   await loadSettings();
-  console.log("Init: settings loaded, overlayEnabled:", overlayEnabled.value);
   defaultScreenshotDir.value = await invoke("cmd_get_screenshot_dir");
+  
+  // Wait for session to be fully restored/validated
   await loadActiveSession();
   await loadTrackingStatus();
-  // Show overlay if tracking is already running/paused AND overlay is enabled
-  console.log("Init: tracking status:", trackingStatus.value, "overlayEnabled:", overlayEnabled.value);
-  if ((trackingStatus.value === "running" || trackingStatus.value === "paused") && overlayEnabled.value) {
-    console.log("Init: showing overlay because tracking is", trackingStatus.value);
-    await showOverlay();
-    if (trackingStatus.value === "running" && !overlayInterval) {
-      overlayElapsed.value = 0;
-      overlayInterval = setInterval(updateOverlayTimer, 1000);
-    }
+  
+  // Force multiple refreshes to ensure sync
+  // Try to get initial data multiple times in case of DB lock or slow start
+  for (let i = 0; i < 5; i++) {
+    console.log(`App init (attempt ${i+1}): refreshing dashboard...`);
+    await refreshDashboard();
+    if (activeSessionSeconds.value > 0) break;
+    await new Promise(r => setTimeout(r, 500));
   }
-  await refreshDashboard();
+  
   window
     .matchMedia("(prefers-color-scheme: dark)")
     .addEventListener("change", applyTheme);
-  refreshInterval = (setInterval(refreshDashboard, 1000) as unknown) as number;
+  
+  refreshInterval = (setInterval(async () => {
+    await refreshDashboard();
+  }, 5000) as unknown) as number;
   taskbarInterval = (setInterval(() => {
     const hours = Math.floor(activeSessionSeconds.value / 3600);
     const mins = Math.floor((activeSessionSeconds.value % 3600) / 60);
@@ -847,12 +828,13 @@ const initApp = async () => {
     if (activeSession.value && status === "running") {
       const prod = dashboardData.value.productivity_score;
       document.title = `▶ ${timeStr} | ${prod}% Prod — Deskrona`;
-    } else if (status === "paused") {
-      document.title = `⏸ Paused | Deskrona`;
+    } else if (activeSession.value && status === "paused") {
+      document.title = `⏸ Break Time | Deskrona`;
     } else {
-      document.title = `⏹ Stopped | Deskrona`;
+      document.title = `Deskrona | Productivity Tracker`;
     }
   }, 1000) as unknown) as number;
+
   await listen<string>("tracking-status-changed", (event) => {
     const newStatus = event.payload;
     if (newStatus === "paused" && trackingStatus.value !== "paused") {
@@ -1130,12 +1112,27 @@ onMounted(async () => {
 
   const cfg = await loadAppConfig();
   pendingMode.value = cfg.mode;
+  // Periodic refresh
+  setInterval(async () => {
+    if (appScreen.value === 'app') {
+      await refreshDashboard();
+    }
+  }, 10000); // 10s
+
+  // Real-time second counter for dashboard matching
+  setInterval(() => {
+    if (appScreen.value === 'app' && trackingStatus.value === 'running') {
+      dashboardData.value.total_active_seconds += 1;
+    }
+  }, 1000);
+
   if (!cfg.setup_done) {
     appScreen.value = "wizard";
   } else if (cfg.mode === "multi_user") {
     const restored = await tryRestoreSession();
     appScreen.value = restored ? "app" : "login";
   } else {
+    const restored = await tryRestoreSession(); // Even in single user, restore ID if needed
     appScreen.value = "app";
   }
 });
