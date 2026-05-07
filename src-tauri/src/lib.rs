@@ -73,6 +73,23 @@ fn end_drag_overlay(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Resu
 }
 
 #[tauri::command]
+fn sync_overlay_from_handle(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    let handle_pos = window.outer_position().map_err(|e| e.to_string())?;
+    let overlay_x = handle_pos.x;
+    let overlay_y = handle_pos.y + 14;
+
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let _ = overlay.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: overlay_x,
+            y: overlay_y,
+        }));
+    }
+
+    let _ = db::update_settings_overlay_position(&app, overlay_x, overlay_y);
+    Ok(())
+}
+
+#[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
@@ -443,9 +460,7 @@ pub fn run() {
                             if let Some(window) = app_handle_bg.get_webview_window("overlay") {
                                 // Apply settings
                                 let _ = window.set_always_on_top(settings.overlay_always_on_top);
-                                let _ = settings.overlay_click_through;
-                                // Keep overlay interactive so controls remain clickable.
-                                let _ = window.set_ignore_cursor_events(false);
+                                let _ = window.set_ignore_cursor_events(settings.overlay_click_through);
                                 
                                 #[derive(Clone, Serialize)]
                                 struct OverlayUpdate {
@@ -456,6 +471,33 @@ pub fn run() {
                                     time: time_str,
                                     status: status.to_string(),
                                 });
+
+                                if settings.overlay_click_through {
+                                    if let Some(handle) = app_handle_bg.get_webview_window("overlay-handle") {
+                                        let _ = handle.set_always_on_top(settings.overlay_always_on_top);
+                                        let _ = handle.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                                            x: settings.overlay_position_x,
+                                            y: settings.overlay_position_y - 14,
+                                        }));
+                                        let _ = handle.show();
+                                    } else {
+                                        let _ = tauri::WebviewWindowBuilder::new(
+                                            &app_handle_bg,
+                                            "overlay-handle",
+                                            tauri::WebviewUrl::App("overlay-handle.html".into())
+                                        )
+                                        .title("Deskrona Overlay Handle")
+                                        .decorations(false)
+                                        .transparent(true)
+                                        .always_on_top(settings.overlay_always_on_top)
+                                        .resizable(false)
+                                        .inner_size(56.0, 14.0)
+                                        .position(settings.overlay_position_x as f64, (settings.overlay_position_y - 14) as f64)
+                                        .build();
+                                    }
+                                } else if let Some(handle) = app_handle_bg.get_webview_window("overlay-handle") {
+                                    let _ = handle.hide();
+                                }
                                 
                                 if !last_shown {
                                     let _ = window.show();
@@ -486,6 +528,9 @@ pub fn run() {
                                     let _ = window.hide();
                                 }
                             }
+                            if let Some(handle) = app_handle_bg.get_webview_window("overlay-handle") {
+                                let _ = handle.hide();
+                            }
                             last_shown = false;
                         }
                     }
@@ -509,6 +554,7 @@ pub fn run() {
             start_drag_overlay,
             move_overlay_window,
             end_drag_overlay,
+            sync_overlay_from_handle,
             cmd_get_tray_info,
             cmd_get_time_logs_range,
             cmd_get_urls_range,

@@ -22,7 +22,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 6px;
+      padding: 4px 6px;
       cursor: move;
       user-select: none;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -32,7 +32,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 4px;
+      margin-bottom: 3px;
       padding: 0 4px;
     }
     .status-dot {
@@ -58,11 +58,11 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 8px;
     }
     .time-display {
       color: #fff;
-      font-size: 22px;
+      font-size: 14px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
       text-shadow: 0 1px 4px rgba(0,0,0,0.5);
@@ -80,13 +80,13 @@
       border: 1px solid rgba(255, 255, 255, 0.2);
       cursor: pointer;
       font-size: 12px;
-      padding: 4px 8px;
+      line-height: 1;
+      padding: 4px 6px;
       border-radius: 4px;
       transition: all 0.2s;
       color: #fff;
       font-weight: 600;
-      min-width: 52px;
-      text-transform: uppercase;
+      min-width: 28px;
     }
     .control-btn:hover {
       background: rgba(255, 255, 255, 0.2);
@@ -110,8 +110,7 @@
     <div class="main-row">
       <span class="time-display" id="timeDisplay">00:00:00</span>
       <div class="controls">
-        <button class="control-btn" id="startBtn">Start</button>
-        <button class="control-btn" id="pauseBtn">Pause</button>
+        <button class="control-btn" id="toggleBtn" title="Pause tracking">⏸</button>
       </div>
     </div>
   </div>
@@ -124,8 +123,7 @@
 
     async function init() {
       console.log('Overlay initialized');
-      const startBtn = document.getElementById('startBtn');
-      const pauseBtn = document.getElementById('pauseBtn');
+      const toggleBtn = document.getElementById('toggleBtn');
       const dot = document.getElementById('statusDot');
       const label = document.getElementById('statusLabel');
       const timeDisplay = document.getElementById('timeDisplay');
@@ -148,16 +146,19 @@
         
         if (status === 'running') {
           label.textContent = 'Active';
-          startBtn.disabled = true;
-          pauseBtn.disabled = false;
+          toggleBtn.textContent = '⏸';
+          toggleBtn.title = 'Pause tracking';
+          toggleBtn.disabled = false;
         } else if (status === 'paused') {
           label.textContent = 'Paused';
-          startBtn.disabled = false;
-          pauseBtn.disabled = true;
+          toggleBtn.textContent = '▶';
+          toggleBtn.title = 'Start tracking';
+          toggleBtn.disabled = false;
         } else {
           label.textContent = 'Stopped';
-          startBtn.disabled = false;
-          pauseBtn.disabled = true;
+          toggleBtn.textContent = '▶';
+          toggleBtn.title = 'Start tracking';
+          toggleBtn.disabled = false;
           dot.className = 'status-dot stopped';
         }
       }
@@ -199,8 +200,10 @@
         }
       }
 
-      startBtn.addEventListener('click', () => setTracking('running'));
-      pauseBtn.addEventListener('click', () => setTracking('paused'));
+      toggleBtn.addEventListener('click', () => {
+        const nextStatus = currentStatus === 'running' ? 'paused' : 'running';
+        setTracking(nextStatus);
+      });
     }
 
     init();

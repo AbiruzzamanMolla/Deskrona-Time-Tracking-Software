@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Overlay Handle</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .drag-handle {
+      width: 100%;
+      height: 100%;
+      background: rgba(13, 27, 42, 0.75);
+      border: 1px solid rgba(58, 90, 124, 0.55);
+      border-radius: 6px 6px 0 0;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 9px;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      cursor: move;
+    }
+  </style>
+</head>
+<body>
+  <div class="drag-handle" id="dragHandle" title="Drag overlay">······</div>
+  <script>
+    const { invoke } = window.__TAURI__.core;
+    const handle = document.getElementById('dragHandle');
+
+    handle.addEventListener('mousedown', async () => {
+      try {
+        await invoke('start_drag_overlay');
+      } catch (e) {
+        console.error('Start handle drag failed:', e);
+      }
+    });
+
+    document.addEventListener('mouseup', async () => {
+      try {
+        await invoke('sync_overlay_from_handle');
+      } catch (e) {}
+    });
+  </script>
+</body>
+</html>
