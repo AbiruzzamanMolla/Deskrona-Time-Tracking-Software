@@ -186,6 +186,16 @@ fn extract_domain_from_title(title: &str) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn get_browser_url_windows(hwnd_str: &str) -> Option<String> {
+    // active-win-pos-rs returns values like "HWND(9700584)" on Windows.
+    // PowerShell's IntPtr cast needs the numeric handle only.
+    let hwnd_numeric = hwnd_str
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
+    if hwnd_numeric.is_empty() {
+        return None;
+    }
+
     // Enhanced PowerShell script with more strategies and multi-language support
     let script = format!(r#"
         Add-Type -AssemblyName UIAutomationClient
@@ -233,7 +243,7 @@ fn get_browser_url_windows(hwnd_str: &str) -> Option<String> {
                 }} catch {{}}
             }}
         }} catch {{}}
-    "#, hwnd_str);
+    "#, hwnd_numeric);
 
     let output = std::process::Command::new("powershell")
         .arg("-NoProfile")

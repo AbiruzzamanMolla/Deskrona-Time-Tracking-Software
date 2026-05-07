@@ -386,6 +386,7 @@ const activeSessionSeconds = computed(() => {
 
 const timeLogsList = ref<TimeLogEntry[]>([]);
 const urlsList = ref<UrlEntryFull[]>([]);
+const expandedUrlRows = ref<Set<string>>(new Set());
 const screenshotsList = ref<ScreenshotEntry[]>([]);
 const userActivityList = ref<AdminActivity[]>([]);
 const userInputStats = ref<InputStats>({
@@ -795,6 +796,38 @@ const loadMoreTrackings = () => {
 const loadMoreUrls = () => {
   urlsOffset.value += pageSize;
   loadFilteredData(true);
+};
+
+const isLikelyUrl = (value: string) => /^(https?:\/\/|www\.)/i.test(value) || /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(value);
+
+const normalizeUrl = (value: string) => {
+  if (!value) return "";
+  return /^(https?:\/\/)/i.test(value) ? value : `https://${value}`;
+};
+
+const getHistoryTitle = (value: string) => {
+  if (!value) return "";
+  if (!isLikelyUrl(value)) return value;
+  try {
+    const u = new URL(normalizeUrl(value));
+    if (u.pathname && u.pathname !== "/") {
+      const last = u.pathname.split("/").filter(Boolean).pop() || "";
+      const decoded = decodeURIComponent(last).replace(/[-_]+/g, " ").trim();
+      if (decoded.length > 0) return decoded;
+    }
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return value;
+  }
+};
+
+const getHistoryUrl = (value: string) => (isLikelyUrl(value) ? normalizeUrl(value) : "");
+
+const toggleUrlRow = (id: string) => {
+  const next = new Set(expandedUrlRows.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedUrlRows.value = next;
 };
 const loadMoreScreenshots = () => {
   screenshotsOffset.value += pageSize;
@@ -1682,9 +1715,17 @@ const doChangeMode = async () => {
         </header>
 
         <div class="url-list">
-          <div v-for="entry in urlsList" :key="entry.id" class="url-row">
+          <div v-for="entry in urlsList" :key="entry.id" class="url-row url-row-clickable"
+            :class="{ 'url-row-expanded': expandedUrlRows.has(entry.id) }" @click="toggleUrlRow(entry.id)">
             <span class="url-time">{{ formatTimestamp(entry.timestamp) }}</span>
-            <span class="url-text" :title="entry.url">{{ entry.url }}</span>
+            <div class="url-entry-content">
+              <span class="url-text" :title="entry.url">{{ getHistoryTitle(entry.url) }}</span>
+              <a v-if="expandedUrlRows.has(entry.id) && getHistoryUrl(entry.url)" class="url-expanded-link"
+                :href="getHistoryUrl(entry.url)" target="_blank" rel="noreferrer noopener"
+                @click.stop>
+                {{ getHistoryUrl(entry.url) }}
+              </a>
+            </div>
           </div>
           <div v-if="urlsList.length === 0" class="empty-state">
             <p>{{ t("message.noUrls") }}</p>
@@ -3222,6 +3263,14 @@ header h1 {
   font-size: 0.88rem;
 }
 
+.url-row-clickable {
+  cursor: pointer;
+}
+
+.url-row-expanded {
+  background: rgba(92, 110, 255, 0.08);
+}
+
 .url-row:last-child {
   border-bottom: none;
 }
@@ -3235,6 +3284,20 @@ header h1 {
 .url-text {
   color: var(--accent);
   font-weight: 500;
+  word-break: break-all;
+}
+
+.url-entry-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.url-expanded-link {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-decoration: underline;
   word-break: break-all;
 }
 
