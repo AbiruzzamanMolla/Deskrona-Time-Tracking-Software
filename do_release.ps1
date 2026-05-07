@@ -25,9 +25,9 @@ try { gh.exe release delete "v$VERSION" --yes 2>$null } catch {}
 gh.exe release create "v$VERSION" `
   --title "Deskrona v$VERSION" `
   --notes-file "CHANGELOG.md" `
-  (Get-Item "src-tauri/target/release/bundle/msi/*.msi").FullName `
-  (Get-Item "src-tauri/target/release/bundle/nsis/*.exe").FullName `
-  (Get-Item "src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*.msi").FullName `
-  (Get-Item "src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe").FullName
+  (Get-Item "src-tauri/target/release/bundle/msi/*$VERSION*.msi").FullName `
+  (Get-Item "src-tauri/target/release/bundle/nsis/*$VERSION*.exe").FullName `
+  (Get-Item "src-tauri/target/i686-pc-windows-msvc/release/bundle/msi/*$VERSION*.msi").FullName `
+  (Get-Item "src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*$VERSION*.exe").FullName
 
 Write-Host "Release Completed successfully!"
