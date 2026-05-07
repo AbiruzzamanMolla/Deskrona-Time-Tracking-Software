@@ -19,7 +19,9 @@ fn show_overlay_window(app: tauri::AppHandle, x: i32, y: i32, always_on_top: boo
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
         let _ = window.set_always_on_top(always_on_top);
-        let _ = window.set_ignore_cursor_events(click_through);
+        let _ = click_through;
+        // Keep overlay interactive so Start/Pause controls always work.
+        let _ = window.set_ignore_cursor_events(false);
         let _ = window.show();
         let _ = window.set_focus();
         Ok(())
@@ -440,7 +442,9 @@ pub fn run() {
                             if let Some(window) = app_handle_bg.get_webview_window("overlay") {
                                 // Apply settings
                                 let _ = window.set_always_on_top(settings.overlay_always_on_top);
-                                let _ = window.set_ignore_cursor_events(settings.overlay_click_through);
+                                let _ = settings.overlay_click_through;
+                                // Keep overlay interactive so controls remain clickable.
+                                let _ = window.set_ignore_cursor_events(false);
                                 
                                 #[derive(Clone, Serialize)]
                                 struct OverlayUpdate {
