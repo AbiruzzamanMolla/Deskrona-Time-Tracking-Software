@@ -3380,6 +3380,72 @@ header h1 {
     font-size: 0.82rem !important;
     padding: 6px 10px !important;
   }
+
+  .view-productivity .activity-summary-row {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    padding: 0 0 12px 0 !important;
+  }
+
+  .view-productivity .activity-stat-card {
+    width: 100% !important;
+    min-width: 0 !important;
+    padding: 12px !important;
+    gap: 10px !important;
+  }
+
+  .view-productivity .activity-stat-card .stat-icon {
+    width: 36px !important;
+    height: 36px !important;
+    font-size: 1rem !important;
+    border-radius: 10px !important;
+  }
+
+  .view-productivity .activity-stat-card div[style*="font-size: 1.5rem"] {
+    font-size: 1.15rem !important;
+    line-height: 1.2 !important;
+    word-break: break-word !important;
+  }
+
+  .view-productivity .productivity-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    padding: 0 !important;
+  }
+
+  .view-productivity .chart-container {
+    height: 260px !important;
+    padding: 12px !important;
+  }
+
+  .view-productivity .card {
+    padding: 12px !important;
+    min-width: 0 !important;
+  }
+
+  .view-productivity .table-responsive {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .view-productivity .table-responsive table {
+    min-width: 520px;
+  }
+
+  .view-productivity th,
+  .view-productivity td {
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+
+  .view-productivity .category-badge-select {
+    font-size: 0.7rem;
+    padding: 4px 8px;
+    min-width: 94px;
+  }
 }
 
 /* Section Blocks */
