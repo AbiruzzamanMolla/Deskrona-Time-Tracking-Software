@@ -473,7 +473,7 @@ pub fn run() {
                                 .transparent(true)
                                 .always_on_top(settings.overlay_always_on_top)
                                 .resizable(false)
-                                .inner_size(300.0, 78.0)
+                                .inner_size(220.0, 48.0)
                                 .position(settings.overlay_position_x as f64, settings.overlay_position_y as f64)
                                 .build();
                                 last_shown = true;
