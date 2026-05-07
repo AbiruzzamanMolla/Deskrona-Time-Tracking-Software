@@ -68,23 +68,33 @@
       text-shadow: 0 1px 4px rgba(0,0,0,0.5);
       flex-grow: 1;
     }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
     .control-btn {
       -webkit-app-region: no-drag;
       background: rgba(255, 255, 255, 0.1);
       border: 1px solid rgba(255, 255, 255, 0.2);
       cursor: pointer;
       font-size: 12px;
-      padding: 4px 12px;
+      padding: 4px 8px;
       border-radius: 4px;
       transition: all 0.2s;
       color: #fff;
       font-weight: 600;
-      min-width: 65px;
+      min-width: 52px;
       text-transform: uppercase;
     }
     .control-btn:hover {
       background: rgba(255, 255, 255, 0.2);
       border-color: rgba(255, 255, 255, 0.4);
+    }
+    .control-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
     }
   </style>
 </head>
@@ -99,7 +109,10 @@
     </div>
     <div class="main-row">
       <span class="time-display" id="timeDisplay">00:00:00</span>
-      <button class="control-btn" id="controlBtn">Start</button>
+      <div class="controls">
+        <button class="control-btn" id="startBtn">Start</button>
+        <button class="control-btn" id="pauseBtn">Pause</button>
+      </div>
     </div>
   </div>
   <script>
@@ -107,26 +120,27 @@
     const { listen } = window.__TAURI__.event;
 
     let currentStatus = 'stopped';
+    let syncInterval = null;
 
     async function init() {
       console.log('Overlay initialized');
-      const btn = document.getElementById('controlBtn');
+      const startBtn = document.getElementById('startBtn');
+      const pauseBtn = document.getElementById('pauseBtn');
       const dot = document.getElementById('statusDot');
       const label = document.getElementById('statusLabel');
       const timeDisplay = document.getElementById('timeDisplay');
 
-      let timerInterval = null;
-      let currentSeconds = 0;
+      function formatSeconds(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      }
 
       function updateUI(status, time) {
         console.log('Updating UI:', status, time);
-        if (time) {
+        if (typeof time === 'string' && time.length > 0) {
           timeDisplay.textContent = time;
-          // Parse time string (H:MM:SS or HH:MM:SS) back to seconds for the local timer
-          const parts = time.split(':').map(Number);
-          if (parts.length === 3) {
-            currentSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-          }
         }
         
         currentStatus = status;
@@ -134,48 +148,36 @@
         
         if (status === 'running') {
           label.textContent = 'Active';
-          btn.textContent = 'Pause';
-          startLocalTimer();
+          startBtn.disabled = true;
+          pauseBtn.disabled = false;
         } else if (status === 'paused') {
           label.textContent = 'Paused';
-          btn.textContent = 'Resume';
-          stopLocalTimer();
+          startBtn.disabled = false;
+          pauseBtn.disabled = true;
         } else {
           label.textContent = 'Stopped';
-          btn.textContent = 'Start';
+          startBtn.disabled = false;
+          pauseBtn.disabled = true;
           dot.className = 'status-dot stopped';
-          stopLocalTimer();
         }
       }
 
-      function startLocalTimer() {
-        if (timerInterval) return;
-        timerInterval = setInterval(() => {
-          currentSeconds++;
-          const h = Math.floor(currentSeconds / 3600);
-          const m = Math.floor((currentSeconds % 3600) / 60);
-          const s = currentSeconds % 60;
-          timeDisplay.textContent = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-        }, 1000);
-      }
-
-      function stopLocalTimer() {
-        if (timerInterval) {
-          clearInterval(timerInterval);
-          timerInterval = null;
+      async function syncFromApi() {
+        try {
+          const [status, stats] = await Promise.all([
+            invoke('cmd_get_tracking'),
+            invoke('cmd_get_dashboard_data')
+          ]);
+          const activeSeconds = Number(stats?.total_active_seconds ?? 0);
+          updateUI(status, formatSeconds(activeSeconds));
+        } catch (e) {
+          console.error('Overlay API sync failed:', e);
         }
       }
 
       // Initial status
-      try {
-        const status = await invoke('cmd_get_tracking');
-        // Also fetch initial time to avoid 00:00:00
-        const stats = await invoke('cmd_get_dashboard_data');
-        const initialTime = stats.total_active_seconds_formatted || '0:00:00';
-        updateUI(status, initialTime);
-      } catch (e) {
-        console.error('Failed to get initial status:', e);
-      }
+      await syncFromApi();
+      syncInterval = setInterval(syncFromApi, 1000);
 
       // Listen for updates from backend
       await listen('update-overlay', (event) => {
@@ -188,25 +190,17 @@
         updateUI(event.payload);
       });
 
-      btn.addEventListener('click', async () => {
-        let newStatus;
-        if (currentStatus === 'running') {
-          newStatus = 'paused';
-        } else if (currentStatus === 'paused') {
-          newStatus = 'running';
-        } else {
-          newStatus = 'running'; // Start if stopped
-        }
-        
+      async function setTracking(status) {
         try {
-          await invoke('cmd_set_tracking', { status: newStatus });
-          // The updateUI will be called by the 'tracking-status-changed' listener
-          // but we can update it immediately for responsiveness
-          updateUI(newStatus);
+          await invoke('cmd_set_tracking', { status });
+          await syncFromApi();
         } catch (e) {
           console.error('Failed to set tracking:', e);
         }
-      });
+      }
+
+      startBtn.addEventListener('click', () => setTracking('running'));
+      pauseBtn.addEventListener('click', () => setTracking('paused'));
     }
 
     init();

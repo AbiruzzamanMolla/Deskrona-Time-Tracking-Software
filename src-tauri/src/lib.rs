@@ -436,8 +436,7 @@ pub fn run() {
                     }
 
                     if let Ok(settings) = db::get_settings(&app_handle_bg) {
-                        // Force hide overlay for now as requested
-                        if false && settings.overlay_enabled {
+                        if settings.overlay_enabled {
                             if let Some(window) = app_handle_bg.get_webview_window("overlay") {
                                 // Apply settings
                                 let _ = window.set_always_on_top(settings.overlay_always_on_top);

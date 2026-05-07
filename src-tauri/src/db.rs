@@ -26,7 +26,7 @@ pub fn get_today_active_seconds(app: &AppHandle) -> Result<i64> {
     }
 
     let total_active: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time) = date('now', 'localtime')",
+        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time) = date('now', 'localtime') AND status = 'active'",
         params![user_id],
         |row| row.get(0),
     ).unwrap_or(0);
@@ -181,9 +181,6 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
         synced_at TEXT,
         conflict_resolution TEXT
     )", []);
-
-    // Ensure overlay is enabled for existing users who just got the column
-    let _ = conn.execute("UPDATE settings SET overlay_enabled = 1 WHERE overlay_enabled = 0", []);
 
     // Insert default settings if none exists
     conn.execute(
