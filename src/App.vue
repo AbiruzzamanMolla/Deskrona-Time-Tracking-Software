@@ -530,9 +530,9 @@ const saveSettings = async () => {
 
 const saveOverlaySettings = async () => {
   const s = await invoke<Settings>("get_settings");
-  (s as any).overlay_enabled = overlayEnabled.value ? 1 : 0;
-  (s as any).overlay_always_on_top = overlayAlwaysOnTop.value ? 1 : 0;
-  (s as any).overlay_click_through = overlayClickThrough.value ? 1 : 0;
+  (s as any).overlay_enabled = !!overlayEnabled.value;
+  (s as any).overlay_always_on_top = !!overlayAlwaysOnTop.value;
+  (s as any).overlay_click_through = !!overlayClickThrough.value;
   (s as any).overlay_position_x = overlayPosition.value.x;
   (s as any).overlay_position_y = overlayPosition.value.y;
   await invoke("update_settings", { settings: s });
