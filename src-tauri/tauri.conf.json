@@ -38,8 +38,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../public/overlay.html": "overlay.html",
-      "../public/overlay-handle.html": "overlay-handle.html"
+      "../public/overlay.html": "overlay.html"
     }
   }
 }

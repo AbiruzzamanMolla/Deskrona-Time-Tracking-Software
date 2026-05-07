@@ -18,22 +18,31 @@
       backdrop-filter: blur(8px);
       border: 1px solid rgba(58, 90, 124, 0.5);
       border-radius: 8px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 4px 6px;
-      cursor: move;
+      display: grid;
+      grid-template-columns: 10px 1fr 30px;
+      align-items: stretch;
+      padding: 2px;
       user-select: none;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     }
+    .drag-strip {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      cursor: move;
+      -webkit-app-region: no-drag;
+    }
+    .content {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0 6px;
+      min-width: 0;
+    }
     .status-bar {
-      width: 100%;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 3px;
-      padding: 0 4px;
+      margin-bottom: 1px;
     }
     .status-dot {
       width: 8px;
@@ -48,45 +57,32 @@
 
     .status-label {
       color: rgba(255, 255, 255, 0.7);
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 500;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .main-row {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
+      letter-spacing: 0.3px;
     }
     .time-display {
       color: #fff;
-      font-size: 14px;
+      font-size: 26px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
       text-shadow: 0 1px 4px rgba(0,0,0,0.5);
-      flex-grow: 1;
-    }
-    .controls {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      -webkit-app-region: no-drag;
     }
     .control-btn {
       -webkit-app-region: no-drag;
       background: rgba(255, 255, 255, 0.1);
       border: 1px solid rgba(255, 255, 255, 0.2);
       cursor: pointer;
-      font-size: 12px;
+      width: 100%;
+      height: 100%;
+      font-size: 14px;
       line-height: 1;
-      padding: 4px 6px;
+      padding: 0;
       border-radius: 4px;
       transition: all 0.2s;
       color: #fff;
       font-weight: 600;
-      min-width: 28px;
     }
     .control-btn:hover {
       background: rgba(255, 255, 255, 0.2);
@@ -100,19 +96,18 @@
 </head>
 <body>
   <div class="overlay-container" id="overlay">
-    <div class="status-bar">
-      <div style="display: flex; align-items: center;">
-        <div class="status-dot" id="statusDot"></div>
-        <span class="status-label" id="statusLabel">Stopped</span>
+    <div class="drag-strip" id="dragStrip" title="Drag overlay"></div>
+    <div class="content">
+      <div class="status-bar">
+        <div style="display: flex; align-items: center;">
+          <div class="status-dot" id="statusDot"></div>
+          <span class="status-label" id="statusLabel">Stopped</span>
+        </div>
+        <span class="status-label" style="font-size: 9px; opacity: 0.5;">TODAY</span>
       </div>
-      <span class="status-label" style="font-size: 9px; opacity: 0.5;">TODAY</span>
-    </div>
-    <div class="main-row">
       <span class="time-display" id="timeDisplay">00:00:00</span>
-      <div class="controls">
-        <button class="control-btn" id="toggleBtn" title="Pause tracking">⏸</button>
-      </div>
     </div>
+    <button class="control-btn" id="toggleBtn" title="Pause tracking">⏸</button>
   </div>
   <script>
     const { invoke } = window.__TAURI__.core;
@@ -210,11 +205,9 @@
 
     // Drag functionality
     const overlay = document.getElementById('overlay');
+    const dragStrip = document.getElementById('dragStrip');
     
-    overlay.addEventListener('mousedown', async (e) => {
-      // Prevent drag when clicking the button
-      if (e.target.closest('.control-btn')) return;
-      
+    dragStrip.addEventListener('mousedown', async () => {
       try {
         await invoke('start_drag_overlay');
       } catch(e) {
