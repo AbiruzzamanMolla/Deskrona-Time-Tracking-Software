@@ -64,6 +64,28 @@ fn update_overlay_time(app: tauri::AppHandle, time: String, status: String) -> R
     }
 }
 
+#[tauri::command]
+fn move_overlay_window(app: tauri::AppHandle, x: i32, y: i32) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+        Ok(())
+    } else {
+        Err("Overlay window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn start_drag_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    println!("Start drag overlay");
+    Ok(())
+}
+
+#[tauri::command]
+fn end_drag_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    println!("End drag overlay");
+    Ok(())
+}
+
 
 
 // ─── Existing Commands ────────────────────────────────────────────
@@ -412,6 +434,7 @@ pub fn run() {
             });
 
             let status_tooltip = format!("Deskrona - Status: {}", tracking::get_tracking_status());
+            println!("Creating tray icon with default icon...");
 
             let tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -451,6 +474,7 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            println!("Tray icon created successfully!");
 
             let _ = TRAY_HANDLE.set(tray);
 
@@ -516,6 +540,9 @@ cmd_get_all_app_categories,
             show_overlay_window,
             hide_overlay_window,
             update_overlay_time,
+            move_overlay_window,
+            start_drag_overlay,
+            end_drag_overlay,
         ])
         .setup(|app| {
             // Check if overlay window exists and create hidden if needed

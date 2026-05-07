@@ -160,14 +160,10 @@ let overlayInterval: ReturnType<typeof setInterval> | null = null;
 const showOverlay = async () => {
   console.log("showOverlay called, overlayEnabled:", overlayEnabled.value);
   if (!overlayEnabled.value) return;
-  // Default to 20px from right edge of primary monitor (assuming 1920px width)
-  // Use Math.min to ensure it's visible on smaller screens too
-  const screenWidth = window.screen.width;
-  const x = overlayPosition.value.x >= 0 
-    ? overlayPosition.value.x 
-    : Math.max(20, screenWidth - 220);
-  const y = overlayPosition.value.y;
-  console.log("Showing overlay at:", x, y, "screen width:", screenWidth);
+  // Use stored position, or default to top-right corner (1700, 20)
+  const x = overlayPosition.value.x >= 0 ? overlayPosition.value.x : 1700;
+  const y = overlayPosition.value.y >= 0 ? overlayPosition.value.y : 20;
+  console.log("Showing overlay at:", x, y);
   try {
     await invoke("show_overlay_window", {
       x,
@@ -197,6 +193,16 @@ const updateOverlayTimer = async () => {
 };
 
 watch(trackingStatus, async (newStatus) => {
+  console.log("Watcher: tracking status changed to", newStatus, "overlayEnabled:", overlayEnabled.value);
+  if (!overlayEnabled.value) {
+    console.log("Watcher: overlay disabled, skipping");
+    if (overlayInterval) {
+      clearInterval(overlayInterval);
+      overlayInterval = null;
+    }
+    await hideOverlay();
+    return;
+  }
   if (newStatus === "running" || newStatus === "paused") {
     await showOverlay();
     if (newStatus === "running" && !overlayInterval) {
@@ -808,15 +814,19 @@ let appInitDone = false;
 const initApp = async () => {
   if (appInitDone) return;
   appInitDone = true;
+  // Load settings FIRST - before showing anything
   await loadSettings();
+  console.log("Init: settings loaded, overlayEnabled:", overlayEnabled.value);
   defaultScreenshotDir.value = await invoke("cmd_get_screenshot_dir");
   await loadActiveSession();
   await loadTrackingStatus();
-  // Show overlay if tracking is already running/paused
-  if (trackingStatus.value === "running" || trackingStatus.value === "paused") {
+  // Show overlay if tracking is already running/paused AND overlay is enabled
+  console.log("Init: tracking status:", trackingStatus.value, "overlayEnabled:", overlayEnabled.value);
+  if ((trackingStatus.value === "running" || trackingStatus.value === "paused") && overlayEnabled.value) {
     console.log("Init: showing overlay because tracking is", trackingStatus.value);
     await showOverlay();
     if (trackingStatus.value === "running" && !overlayInterval) {
+      overlayElapsed.value = 0;
       overlayInterval = setInterval(updateOverlayTimer, 1000);
     }
   }

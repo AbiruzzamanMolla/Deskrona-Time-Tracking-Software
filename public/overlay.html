@@ -14,7 +14,8 @@
     .overlay-container {
       width: 100vw;
       height: 100vh;
-      background: rgba(26, 26, 26, 0.92);
+      background: linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%);
+      border: 1px solid #3a5a7c;
       border-radius: 8px;
       display: flex;
       align-items: center;
@@ -22,68 +23,89 @@
       padding: 8px 12px;
       cursor: move;
       user-select: none;
-      -webkit-app-region: drag;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .overlay-container:active {
+      cursor: moving;
     }
     .time-display {
       color: #fff;
       font-size: 18px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
     }
     .control-btn {
       -webkit-app-region: no-drag;
-      background: transparent;
-      border: none;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
       cursor: pointer;
-      font-size: 20px;
-      padding: 4px;
+      font-size: 14px;
+      padding: 6px 16px;
       border-radius: 4px;
-      transition: background 0.2s;
-      width: 32px;
-      height: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      transition: all 0.2s;
+      color: #fff;
+      font-weight: 500;
+      min-width: 70px;
     }
     .control-btn:hover {
-      background: rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.25);
+      border-color: rgba(255, 255, 255, 0.5);
     }
-    .control-btn[title]:hover::after {
-      content: attr(title);
-      position: absolute;
-      top: -28px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: #333;
-      color: #fff;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      white-space: nowrap;
+    .control-btn:active {
+      background: rgba(255, 255, 255, 0.35);
     }
   </style>
 </head>
 <body>
   <div class="overlay-container" id="overlay">
     <span class="time-display" id="timeDisplay">00:00:00</span>
-    <button class="control-btn" id="controlBtn" title="Pause">⏸</button>
+    <button class="control-btn" id="controlBtn">Pause</button>
   </div>
   <script>
     let currentStatus = 'running';
-    let isClickThrough = false;
+    let isDragging = false;
+    let dragOffset = { x: 0, y: 0 };
 
     function updateOverlayTime(time, status) {
       document.getElementById('timeDisplay').textContent = time;
       currentStatus = status;
       const btn = document.getElementById('controlBtn');
       if (status === 'running') {
-        btn.textContent = '⏸';
-        btn.title = 'Pause';
+        btn.textContent = 'Pause';
       } else if (status === 'paused') {
-        btn.textContent = '▶';
-        btn.title = 'Resume';
+        btn.textContent = 'Resume';
       }
     }
+
+    // Drag functionality
+    const overlay = document.getElementById('overlay');
+    
+    overlay.addEventListener('mousedown', async (e) => {
+      if (e.target.classList.contains('control-btn')) return;
+      isDragging = true;
+      const { invoke } = window.__TAURI__.core;
+      try {
+        await invoke('start_drag_overlay');
+      } catch(e) {}
+    });
+
+    document.addEventListener('mousemove', async (e) => {
+      if (!isDragging) return;
+      const { invoke } = window.__TAURI__.core;
+      try {
+        await invoke('move_overlay_window', { x: e.screenX - 100, y: e.screenY - 30 });
+      } catch(e) {}
+    });
+
+    document.addEventListener('mouseup', async () => {
+      if (!isDragging) return;
+      isDragging = false;
+      const { invoke } = window.__TAURI__.core;
+      try {
+        await invoke('end_drag_overlay');
+      } catch(e) {}
+    });
 
     document.getElementById('controlBtn').addEventListener('click', async () => {
       try {
