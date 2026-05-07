@@ -2919,22 +2919,24 @@ body {
 }
 
 *::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--border-color);
+  background: linear-gradient(180deg, var(--accent) 0%, #7c83ff 100%);
   border-radius: 999px;
-  transition: background 0.2s;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: filter 0.2s ease;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  filter: brightness(1.08);
 }
 
 *::-webkit-scrollbar-corner {
@@ -2944,6 +2946,7 @@ body {
 .app-layout {
   display: flex;
   height: 100vh;
+  overflow: hidden;
 }
 
 /* ─── Sidebar ──────────────────────────────────────────────────── */
@@ -3079,7 +3082,9 @@ nav button.active {
 .main-content {
   flex: 1;
   padding: 32px 40px;
-  overflow-y: auto;
+  overflow: auto;
+  min-width: 0;
+  overscroll-behavior: contain;
 }
 
 header h1 {
@@ -3119,6 +3124,7 @@ header h1 {
   border-radius: 12px;
   border: 1px solid var(--border-color);
   transition: all 0.2s ease;
+  overflow: hidden;
 }
 
 .premium-card:hover {
@@ -3194,6 +3200,7 @@ header h1 {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .chip-text small {
@@ -3202,12 +3209,14 @@ header h1 {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
+  line-height: 1.05;
 }
 
 .chip-text strong {
   font-size: 1.2rem;
   line-height: 1.1;
   color: var(--text-color);
+  word-break: break-word;
 }
 
 .big-stat {
@@ -3231,12 +3240,145 @@ header h1 {
 }
 
 @media (max-width: 980px) {
+  .sidebar {
+    width: 220px;
+    min-width: 220px;
+  }
+
+  .main-content {
+    padding: 20px 16px;
+  }
+
+  .view-header h1 {
+    font-size: 1.02rem;
+  }
+
   .summary-cards {
+    min-width: 620px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas:
       "active idle"
       "total total"
       "activity activity";
+  }
+
+  .summary-metric-card {
+    min-height: 84px;
+    padding: 12px;
+  }
+
+  .premium-card h3 {
+    font-size: 0.62rem;
+    letter-spacing: 0.03em;
+  }
+
+  .big-stat {
+    font-size: 1.28rem;
+  }
+
+  .summary-input-card {
+    padding: 10px;
+  }
+
+  .summary-input-chip {
+    gap: 8px;
+    padding: 8px 9px;
+  }
+
+  .chip-icon {
+    font-size: 0.84rem;
+  }
+
+  .chip-text small {
+    font-size: 0.56rem;
+  }
+
+  .chip-text strong {
+    font-size: 0.74rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .sidebar {
+    width: 192px;
+    min-width: 192px;
+  }
+
+  .logo {
+    padding: 16px;
+  }
+
+  nav button {
+    font-size: 0.86rem;
+    padding: 10px 12px;
+  }
+
+  .summary-cards {
+    min-width: 560px;
+  }
+
+  .privacy-notice {
+    padding: 10px 12px;
+  }
+
+  .privacy-text strong {
+    font-size: 0.76rem;
+  }
+
+  .privacy-text p {
+    font-size: 0.66rem;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-layout {
+    flex-direction: column;
+    height: 100vh;
+    overflow: auto;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    max-height: 44vh;
+    overflow: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .main-content {
+    width: 100%;
+    min-width: 0;
+    padding: 14px 12px 18px;
+    overflow: auto;
+  }
+
+  .summary-cards {
+    min-width: 0;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "active"
+      "idle"
+      "total"
+      "activity";
+  }
+
+  .summary-input-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .big-stat {
+    font-size: 1.06rem;
+  }
+
+  .chip-text strong {
+    font-size: 1rem;
+  }
+
+  .btn-browse {
+    font-size: 0.82rem !important;
+    padding: 6px 10px !important;
   }
 }
 
