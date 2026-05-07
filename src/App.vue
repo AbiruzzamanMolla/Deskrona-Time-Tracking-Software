@@ -1498,17 +1498,17 @@ const doChangeMode = async () => {
         </header>
 
         <div class="summary-cards">
-          <div class="card premium-card">
+          <div class="card premium-card summary-metric-card summary-active">
             <h3>{{ t("message.activeTime") }}</h3>
             <p class="big-stat">{{ formatTime(dashboardData.total_active_seconds) }}</p>
           </div>
-          <div class="card premium-card">
+          <div class="card premium-card summary-metric-card summary-idle">
             <h3>{{ t("message.idleTime") }}</h3>
             <p class="big-stat idle">
               {{ formatTime(dashboardData.total_idle_seconds) }}
             </p>
           </div>
-          <div class="card premium-card">
+          <div class="card premium-card summary-metric-card summary-total">
             <h3>{{ t("message.totalTime") }}</h3>
             <p class="big-stat total">
               {{
@@ -1518,17 +1518,24 @@ const doChangeMode = async () => {
               }}
             </p>
           </div>
-          <div class="card premium-card" style="border-left: 3px solid var(--accent)">
-            <h3>⌨️ {{ t("message.keyboard") }}</h3>
-            <p class="big-stat" style="color: var(--accent)">
-              {{ dashboardData.keyboard_count.toLocaleString() }}
-            </p>
-          </div>
-          <div class="card premium-card" style="border-left: 3px solid var(--success)">
-            <h3>🖱 {{ t("message.mouse") }}</h3>
-            <p class="big-stat" style="color: var(--success)">
-              {{ dashboardData.mouse_count.toLocaleString() }}
-            </p>
+          <div class="card premium-card summary-input-card summary-activity">
+            <h3>⚡ {{ t("message.activity") }}</h3>
+            <div class="summary-input-grid">
+              <div class="summary-input-chip keyboard">
+                <span class="chip-icon">⌨️</span>
+                <div class="chip-text">
+                  <small>{{ t("message.keyboard") }}</small>
+                  <strong>{{ dashboardData.keyboard_count.toLocaleString() }}</strong>
+                </div>
+              </div>
+              <div class="summary-input-chip mouse">
+                <span class="chip-icon">🖱</span>
+                <div class="chip-text">
+                  <small>{{ t("message.mouse") }}</small>
+                  <strong>{{ dashboardData.mouse_count.toLocaleString() }}</strong>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -3093,9 +3100,13 @@ header h1 {
 /* Summary Cards */
 .summary-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-areas:
+    "active idle total"
+    "activity activity activity";
   gap: 16px;
   margin-bottom: 24px;
+  width: 100%;
 }
 
 .premium-card {
@@ -3124,6 +3135,81 @@ header h1 {
   letter-spacing: 0.06em;
 }
 
+.summary-metric-card {
+  min-height: 92px;
+}
+
+.summary-active {
+  grid-area: active;
+}
+
+.summary-idle {
+  grid-area: idle;
+}
+
+.summary-total {
+  grid-area: total;
+}
+
+.summary-input-card {
+  grid-area: activity;
+  align-items: stretch;
+  padding: 14px;
+}
+
+.summary-input-card h3 {
+  margin-bottom: 10px;
+}
+
+.summary-input-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summary-input-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.summary-input-chip.keyboard {
+  border-left: 3px solid var(--accent);
+}
+
+.summary-input-chip.mouse {
+  border-left: 3px solid var(--success);
+}
+
+.chip-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.chip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chip-text small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
+.chip-text strong {
+  font-size: 1.2rem;
+  line-height: 1.1;
+  color: var(--text-color);
+}
+
 .big-stat {
   font-size: 1.6rem;
   font-weight: 800;
@@ -3142,6 +3228,16 @@ header h1 {
 
 .big-stat.total {
   color: var(--text-color);
+}
+
+@media (max-width: 980px) {
+  .summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "active idle"
+      "total total"
+      "activity activity";
+  }
 }
 
 /* Section Blocks */
