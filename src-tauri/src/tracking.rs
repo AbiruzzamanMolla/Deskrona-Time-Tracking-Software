@@ -302,8 +302,8 @@ fn extract_url_from_title(app_name: &str, title: &str, window_id: &str) -> Optio
 }
 
 pub fn start_tracking(app: AppHandle) {
-    let last_input_time: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now()));
     let idle_logged: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let auto_paused_by_idle: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
     let idle_threshold_base = Duration::from_secs(crate::db::get_idle_threshold_secs(&app));
 
@@ -384,9 +384,17 @@ pub fn start_tracking(app: AppHandle) {
         let device_state = DeviceState::new();
         let mut last_mouse_pos = device_state.get_mouse().coords;
         let mut last_keys: Vec<device_query::Keycode> = device_state.get_keys();
+        let mut last_mouse_input_time = Instant::now();
+        let mut last_keyboard_input_time = Instant::now();
         // Reload threshold every N seconds to respect settings changes
         let mut idle_threshold = idle_threshold_base;
+        let mut monitor_mouse = true;
+        let mut monitor_keyboard = true;
         let mut threshold_reload_counter: u32 = 0;
+        if let Ok(s) = crate::db::get_settings(&app) {
+            monitor_mouse = s.idle_monitor_mouse;
+            monitor_keyboard = s.idle_monitor_keyboard;
+        }
 
         loop {
             std::thread::sleep(Duration::from_secs(1));
@@ -396,11 +404,15 @@ pub fn start_tracking(app: AppHandle) {
             if threshold_reload_counter >= 60 {
                 threshold_reload_counter = 0;
                 idle_threshold = Duration::from_secs(crate::db::get_idle_threshold_secs(&app));
+                if let Ok(s) = crate::db::get_settings(&app) {
+                    monitor_mouse = s.idle_monitor_mouse;
+                    monitor_keyboard = s.idle_monitor_keyboard;
+                }
             }
 
             // Check tracking state
             let state = TRACKING_STATE.load(Ordering::SeqCst);
-            if state == 0 || state == 2 {
+            if state == 0 || (state == 2 && !*auto_paused_by_idle.lock().unwrap()) {
                 // Stopped or Paused: flush current window if any
                 if let Ok(mut current) = CURRENT_WINDOW.lock() {
                     if let Some(cw) = current.take() {
@@ -439,8 +451,16 @@ pub fn start_tracking(app: AppHandle) {
             let mouse_moved = current_mouse != last_mouse_pos;
             let keys_changed = current_keys != last_keys;
 
-            if mouse_moved || keys_changed {
-                *last_input_time.lock().unwrap() = Instant::now();
+            if mouse_moved {
+                last_mouse_input_time = Instant::now();
+            }
+            if keys_changed {
+                last_keyboard_input_time = Instant::now();
+            }
+
+            let monitored_activity = (monitor_mouse && mouse_moved) || (monitor_keyboard && keys_changed);
+
+            if monitored_activity {
                 let was_idle = {
                     let mut idle = idle_logged.lock().unwrap();
                     let was = *idle;
@@ -455,6 +475,14 @@ pub fn start_tracking(app: AppHandle) {
                         );
                     }
                 }
+                let mut auto_idle_pause = auto_paused_by_idle.lock().unwrap();
+                if *auto_idle_pause && TRACKING_STATE.load(Ordering::SeqCst) == 2 {
+                    set_tracking_status("running");
+                    *auto_idle_pause = false;
+                }
+            }
+
+            if mouse_moved || keys_changed {
                 // Log keyboard/mouse input events separately
                 if let Ok(conn) = Connection::open(&db_path) {
                     let uid = get_active_user_id();
@@ -475,8 +503,18 @@ pub fn start_tracking(app: AppHandle) {
             last_mouse_pos = current_mouse;
             last_keys = current_keys;
 
-            let elapsed = last_input_time.lock().unwrap().elapsed();
-            if elapsed >= idle_threshold {
+            let should_idle = if monitor_mouse && monitor_keyboard {
+                last_mouse_input_time.elapsed() >= idle_threshold
+                    && last_keyboard_input_time.elapsed() >= idle_threshold
+            } else if monitor_mouse {
+                last_mouse_input_time.elapsed() >= idle_threshold
+            } else if monitor_keyboard {
+                last_keyboard_input_time.elapsed() >= idle_threshold
+            } else {
+                false
+            };
+
+            if should_idle && TRACKING_STATE.load(Ordering::SeqCst) == 1 {
                 let mut idle = idle_logged.lock().unwrap();
                 if !*idle {
                     *idle = true;
@@ -486,6 +524,8 @@ pub fn start_tracking(app: AppHandle) {
                             (Uuid::new_v4().to_string(), get_active_user_id(), Local::now().to_rfc3339()),
                         );
                     }
+                    set_tracking_status("paused");
+                    *auto_paused_by_idle.lock().unwrap() = true;
                 }
                 continue;
             }

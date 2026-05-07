@@ -56,6 +56,8 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
             backup_frequency TEXT NOT NULL DEFAULT 'never',
             backup_location TEXT NOT NULL DEFAULT '',
             idle_threshold INTEGER NOT NULL DEFAULT 5,
+            idle_monitor_mouse BOOLEAN NOT NULL DEFAULT 1,
+            idle_monitor_keyboard BOOLEAN NOT NULL DEFAULT 1,
             overlay_enabled BOOLEAN NOT NULL DEFAULT 0,
             overlay_always_on_top BOOLEAN NOT NULL DEFAULT 1,
             overlay_click_through BOOLEAN NOT NULL DEFAULT 0,
@@ -144,6 +146,8 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
 
     let migrations = [
         ("idle_threshold", "ALTER TABLE settings ADD COLUMN idle_threshold INTEGER NOT NULL DEFAULT 5"),
+        ("idle_monitor_mouse", "ALTER TABLE settings ADD COLUMN idle_monitor_mouse INTEGER NOT NULL DEFAULT 1"),
+        ("idle_monitor_keyboard", "ALTER TABLE settings ADD COLUMN idle_monitor_keyboard INTEGER NOT NULL DEFAULT 1"),
         ("is_screenshot_enabled", "ALTER TABLE settings ADD COLUMN is_screenshot_enabled INTEGER NOT NULL DEFAULT 1"),
         ("overlay_enabled", "ALTER TABLE settings ADD COLUMN overlay_enabled INTEGER NOT NULL DEFAULT 1"),
         ("overlay_always_on_top", "ALTER TABLE settings ADD COLUMN overlay_always_on_top INTEGER NOT NULL DEFAULT 1"),
@@ -184,8 +188,8 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
 
     // Insert default settings if none exists
     conn.execute(
-        "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
-         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 0, 100, 100, ?3, ?3
+        "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, idle_monitor_mouse, idle_monitor_keyboard, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
+         SELECT ?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 1, 1, 0, 100, 100, ?3, ?3
          WHERE NOT EXISTS (SELECT 1 FROM settings WHERE user_id = ?2)",
         (
             uuid::Uuid::new_v4().to_string(),
@@ -206,6 +210,8 @@ pub struct Settings {
     pub backup_frequency: String,
     pub backup_location: String,
     pub idle_threshold: i32,
+    pub idle_monitor_mouse: bool,
+    pub idle_monitor_keyboard: bool,
     pub is_screenshot_enabled: bool,
     pub overlay_enabled: bool,
     pub overlay_always_on_top: bool,
@@ -220,7 +226,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let user_id = crate::tracking::get_active_user_id();
     
     // Try to get settings for the active user
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100) FROM settings WHERE user_id = ?1 LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100) FROM settings WHERE user_id = ?1 LIMIT 1")?;
     
     let result = stmt.query_row(params![user_id], |row| {
         Ok(Settings {
@@ -232,12 +238,14 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             backup_frequency: row.get(5)?,
             backup_location: row.get(6)?,
             idle_threshold: row.get(7)?,
-            is_screenshot_enabled: row.get::<_, i32>(8)? != 0,
-            overlay_enabled: row.get::<_, i32>(9)? != 0,
-            overlay_always_on_top: row.get::<_, i32>(10)? != 0,
-            overlay_click_through: row.get::<_, i32>(11)? != 0,
-            overlay_position_x: row.get(12)?,
-            overlay_position_y: row.get(13)?,
+            idle_monitor_mouse: row.get::<_, i32>(8)? != 0,
+            idle_monitor_keyboard: row.get::<_, i32>(9)? != 0,
+            is_screenshot_enabled: row.get::<_, i32>(10)? != 0,
+            overlay_enabled: row.get::<_, i32>(11)? != 0,
+            overlay_always_on_top: row.get::<_, i32>(12)? != 0,
+            overlay_click_through: row.get::<_, i32>(13)? != 0,
+            overlay_position_x: row.get(14)?,
+            overlay_position_y: row.get(15)?,
         })
     });
 
@@ -247,8 +255,8 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             // Create default settings for this user
             let now = chrono::Utc::now().to_rfc3339();
             conn.execute(
-                "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
-                 VALUES (?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 0, 100, 100, ?3, ?3)",
+                "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, idle_monitor_mouse, idle_monitor_keyboard, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, created_at, updated_at)
+                 VALUES (?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 1, 1, 0, 100, 100, ?3, ?3)",
                 (
                     uuid::Uuid::new_v4().to_string(),
                     &user_id,
@@ -266,6 +274,8 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
                 backup_frequency: "never".to_string(),
                 backup_location: "".to_string(),
                 idle_threshold: 5,
+                idle_monitor_mouse: true,
+                idle_monitor_keyboard: true,
                 is_screenshot_enabled: true,
                 overlay_enabled: true,
                 overlay_always_on_top: true,
@@ -292,14 +302,16 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             backup_frequency = ?6,
             backup_location = ?7,
             idle_threshold = ?8,
-            is_screenshot_enabled = ?9,
-            overlay_enabled = ?10,
-            overlay_always_on_top = ?11,
-            overlay_click_through = ?12,
-            overlay_position_x = ?13,
-            overlay_position_y = ?14,
-            updated_at = ?15 
-        WHERE user_id = ?16",
+            idle_monitor_mouse = ?9,
+            idle_monitor_keyboard = ?10,
+            is_screenshot_enabled = ?11,
+            overlay_enabled = ?12,
+            overlay_always_on_top = ?13,
+            overlay_click_through = ?14,
+            overlay_position_x = ?15,
+            overlay_position_y = ?16,
+            updated_at = ?17 
+        WHERE user_id = ?18",
         params![
             settings.language,
             settings.theme,
@@ -309,6 +321,8 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.backup_frequency,
             settings.backup_location,
             settings.idle_threshold,
+            settings.idle_monitor_mouse as i32,
+            settings.idle_monitor_keyboard as i32,
             settings.is_screenshot_enabled as i32,
             settings.overlay_enabled as i32,
             settings.overlay_always_on_top as i32,

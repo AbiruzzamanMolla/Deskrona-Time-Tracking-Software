@@ -27,6 +27,8 @@ interface Settings {
   backup_frequency: string;
   backup_location: string;
   idle_threshold: number;
+  idle_monitor_mouse: boolean;
+  idle_monitor_keyboard: boolean;
   overlay_enabled?: boolean;
   overlay_always_on_top?: boolean;
   overlay_click_through?: boolean;
@@ -134,6 +136,8 @@ const settings = ref<Settings>({
   backup_frequency: "never",
   backup_location: "",
   idle_threshold: 5,
+  idle_monitor_mouse: true,
+  idle_monitor_keyboard: true,
 });
 
 const currentView = ref("dashboard");
@@ -2144,6 +2148,60 @@ const doChangeMode = async () => {
                     {{
                       settings.is_screenshot_enabled
                         ? t("message.active")
+                        : t("message.disabled")
+                    }}
+                  </span>
+                </div>
+              </div>
+              <div class="card setting-card" :class="{
+                'card-disabled':
+                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
+              }">
+                <label>
+                  Mouse Idle Monitor
+                  <span v-if="
+                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
+                  " class="lock-icon">🔒</span>
+                </label>
+                <small class="setting-desc">Use mouse activity for idle detection</small>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="settings.idle_monitor_mouse" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
+                    " />
+                  <span :style="{
+                    color: settings.idle_monitor_mouse
+                      ? 'var(--success)'
+                      : 'var(--text-muted)',
+                  }">
+                    {{
+                      settings.idle_monitor_mouse
+                        ? t("message.enabled")
+                        : t("message.disabled")
+                    }}
+                  </span>
+                </div>
+              </div>
+              <div class="card setting-card" :class="{
+                'card-disabled':
+                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
+              }">
+                <label>
+                  Keyboard Idle Monitor
+                  <span v-if="
+                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
+                  " class="lock-icon">🔒</span>
+                </label>
+                <small class="setting-desc">Use keyboard activity for idle detection</small>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="settings.idle_monitor_keyboard" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
+                    " />
+                  <span :style="{
+                    color: settings.idle_monitor_keyboard
+                      ? 'var(--success)'
+                      : 'var(--text-muted)',
+                  }">
+                    {{
+                      settings.idle_monitor_keyboard
+                        ? t("message.enabled")
                         : t("message.disabled")
                     }}
                   </span>
