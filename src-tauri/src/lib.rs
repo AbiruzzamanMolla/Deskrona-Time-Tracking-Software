@@ -438,13 +438,22 @@ pub fn run() {
                                     if let Ok(pos_guard) = OVERLAY_POS.lock() {
                                         if let Some(pos) = *pos_guard {
                                             let mouse = device_state.get_mouse();
-                                            let btn_left = pos.x + 220 - 40;
-                                            let btn_right = pos.x + 220;
-                                            let btn_top = pos.y;
-                                            let btn_bottom = pos.y + 48;
-                                            let over_btn = mouse.coords.0 >= btn_left && mouse.coords.0 <= btn_right
-                                                && mouse.coords.1 >= btn_top && mouse.coords.1 <= btn_bottom;
-                                            let _ = window.set_ignore_cursor_events(!over_btn);
+                                            let wx = pos.x;
+                                            let wy = pos.y;
+                                            // Overlay is 220w x 48h
+                                            // Interactive zones: left drag strip (0-14px) + right button (220-40 to 220px)
+                                            let drag_left = wx;
+                                            let drag_right = wx + 14;
+                                            let btn_left = wx + 220 - 40;
+                                            let btn_right = wx + 220;
+                                            let top = wy;
+                                            let bottom = wy + 48;
+                                            let on_drag = mouse.coords.0 >= drag_left && mouse.coords.0 <= drag_right
+                                                && mouse.coords.1 >= top && mouse.coords.1 <= bottom;
+                                            let on_btn = mouse.coords.0 >= btn_left && mouse.coords.0 <= btn_right
+                                                && mouse.coords.1 >= top && mouse.coords.1 <= bottom;
+                                            let over_interactive = on_drag || on_btn;
+                                            let _ = window.set_ignore_cursor_events(!over_interactive);
                                         }
                                     }
                                 }
@@ -515,7 +524,7 @@ pub fn run() {
                                 }
                             } else {
                                 // Create overlay window
-                                let _ = tauri::WebviewWindowBuilder::new(
+                                if let Ok(ref win) = tauri::WebviewWindowBuilder::new(
                                     &app_handle_bg,
                                     "overlay",
                                     tauri::WebviewUrl::App("overlay.html".into())
@@ -528,7 +537,16 @@ pub fn run() {
                                 .skip_taskbar(true)
                                 .inner_size(220.0, 48.0)
                                 .position(settings.overlay_position_x as f64, settings.overlay_position_y as f64)
-                                .build();
+                                .build()
+                                {
+                                    win.on_window_event(move |event| {
+                                        if let tauri::WindowEvent::Moved(position) = event {
+                                            if let Ok(mut pos_guard) = OVERLAY_POS.lock() {
+                                                *pos_guard = Some(*position);
+                                            }
+                                        }
+                                    });
+                                }
                                 // Store position for cursor thread
                                 if let Ok(mut pos_guard) = OVERLAY_POS.lock() {
                                     *pos_guard = Some(tauri::PhysicalPosition {
