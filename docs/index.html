@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deskrona - Time Tracking Software</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d1b2a;
+  --bg-card: #152a3e;
+  --bg-nav: rgba(13, 27, 42, 0.9);
+  --text: #e8edf2;
+  --text-muted: #8ba0bb;
+  --accent: #5f8bb8;
+  --accent-light: #7aa8d4;
+  --border: rgba(95, 139, 184, 0.25);
+  --shadow: rgba(0, 0, 0, 0.4);
+  --hero-gradient: linear-gradient(135deg, #0a1628 0%, #152a3e 50%, #0d1b2a 100%);
+}
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-card: #f0f4f8;
+  --bg-nav: rgba(255, 255, 255, 0.95);
+  --text: #1a2332;
+  --text-muted: #5a6f8a;
+  --accent: #1e3a5f;
+  --accent-light: #2a5075;
+  --border: rgba(30, 58, 95, 0.15);
+  --shadow: rgba(0, 0, 0, 0.1);
+  --hero-gradient: linear-gradient(135deg, #eef3f8 0%, #dbe4ed 50%, #eef3f8 100%);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  transition: background 0.3s, color 0.3s;
+  line-height: 1.6;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-light); }
+
+/* Nav */
+nav {
+  position: fixed; top: 0; width: 100%; z-index: 100;
+  background: var(--bg-nav);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 60px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.nav-logo { font-weight: 800; font-size: 1.2rem; color: var(--accent); }
+.nav-links { display: flex; gap: 20px; align-items: center; }
+.nav-links a { font-size: 0.9rem; font-weight: 500; color: var(--text-muted); cursor: pointer; }
+.nav-links a:hover { color: var(--text); }
+.theme-toggle {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text);
+  transition: all 0.2s;
+}
+.theme-toggle:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Hero */
+.hero {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center;
+  padding: 80px 24px 60px;
+  background: var(--hero-gradient);
+  position: relative;
+  overflow: hidden;
+}
+/* Placeholder for background image - replace hero-bg.jpg with actual screenshot */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  background-image: url('hero-bg.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.hero-content { max-width: 700px; position: relative; z-index: 1; }
+.hero h1 {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, var(--accent-light), #c8dfff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero p {
+  font-size: 1.15rem;
+  color: var(--text-muted);
+  margin-bottom: 36px;
+  max-width: 520px;
+  margin-left: auto; margin-right: auto;
+}
+.hero-buttons { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 32px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.25s;
+  border: none;
+  text-decoration: none;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--accent-light);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(95, 139, 184, 0.35);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 2px solid var(--border);
+}
+.btn-secondary:hover {
+  border-color: var(--accent);
+  background: rgba(95, 139, 184, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Sections */
+section { padding: 80px 24px; max-width: 1100px; margin: 0 auto; }
+.section-title {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.section-subtitle {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 1rem;
+  margin-bottom: 48px;
+}
+
+/* Features */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+}
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  transition: all 0.25s;
+}
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px var(--shadow);
+  border-color: var(--accent);
+}
+.feature-icon { font-size: 2rem; margin-bottom: 12px; }
+.feature-card h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+.feature-card p { color: var(--text-muted); font-size: 0.92rem; line-height: 1.7; }
+
+/* FAQ */
+.faq-list { max-width: 720px; margin: 0 auto; }
+.faq-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.faq-question {
+  padding: 18px 24px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  transition: background 0.2s;
+}
+.faq-question:hover { background: rgba(95, 139, 184, 0.08); }
+.faq-question::after {
+  content: '+';
+  font-size: 1.3rem;
+  color: var(--accent);
+  transition: transform 0.2s;
+}
+.faq-item.open .faq-question::after { content: '−'; }
+.faq-answer {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+  padding: 0 24px;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+.faq-item.open .faq-answer {
+  max-height: 300px;
+  padding: 0 24px 18px;
+}
+
+/* Contact */
+.contact-section {
+  text-align: center;
+}
+.contact-section p { color: var(--text-muted); margin-bottom: 16px; }
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 32px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-logo">Deskrona</span>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#faq">FAQ</a>
+    <a href="#contact">Contact</a>
+    <button class="theme-toggle" id="themeToggle">🌙 Dark</button>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero" id="hero">
+  <div class="hero-content">
+    <h1>Deskrona</h1>
+    <p>Local-first, privacy-focused time tracking &amp; productivity monitoring. All your data stays on your machine.</p>
+    <div class="hero-buttons">
+      <a class="btn btn-primary" href="https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases" target="_blank">⬇ Download</a>
+      <a class="btn btn-secondary" href="https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software" target="_blank">⌨ Source on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features">
+  <h2 class="section-title">Features</h2>
+  <p class="section-subtitle">Everything you need for productive work tracking</p>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">🔒</div>
+      <h3>Local-First</h3>
+      <p>All data stays on your machine. SQLite storage, no cloud dependency, complete privacy.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⏱</div>
+      <h3>Real-Time Tracking</h3>
+      <p>Automatic detection of active applications, window titles, and browser URLs. Idle detection included.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📸</div>
+      <h3>Screenshots</h3>
+      <p>Automated multi-monitor screenshot capture at configurable intervals for accurate activity logs.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📊</div>
+      <h3>Advanced Reports</h3>
+      <p>Dashboard with daily/weekly/monthly/yearly views. Track active time, idle time, keyboard &amp; mouse stats.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🏢</div>
+      <h3>Multi-User</h3>
+      <p>Enterprise mode with company, admin, and employee accounts. Role-based access control.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🌙</div>
+      <h3>Premium UI &amp; Themes</h3>
+      <p>Polished dark/light themes, multilingual support (English &amp; Bengali), system tray integration.</p>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq">
+  <h2 class="section-title">FAQ</h2>
+  <p class="section-subtitle">Common questions about Deskrona</p>
+  <div class="faq-list">
+    <div class="faq-item">
+      <div class="faq-question">Is my data sent to any server?</div>
+      <div class="faq-answer">No. Deskrona is local-first. All tracking data, screenshots, and settings are stored in a SQLite database on your machine. Nothing leaves your computer.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-question">Which platforms are supported?</div>
+      <div class="faq-answer">Currently Windows (64-bit). Cross-platform support for macOS and Linux is planned for future releases.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-question">Does it track browser URLs?</div>
+      <div class="faq-answer">Yes, Deskrona can detect browser URLs from Chrome, Firefox, Edge, Brave, and other Chromium-based browsers. This can be configured in settings.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-question">Can I use it with my team?</div>
+      <div class="faq-answer">Yes. Deskrona supports multi-user mode with company admin and employee accounts. Admins can view team productivity and manage settings centrally.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-question">How often are screenshots taken?</div>
+      <div class="faq-answer">The screenshot interval is configurable in settings (default: 10 seconds). You can also disable screenshots entirely if preferred.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-question">Is there a backup feature?</div>
+      <div class="faq-answer">Yes. Automated backups can be scheduled (daily, weekly, monthly) with a configurable backup location. Manual export and import are also supported.</div>
+    </div>
+  </div>
+</section>
+
+<!-- Contact -->
+<section id="contact" class="contact-section">
+  <h2 class="section-title">Contact</h2>
+  <p>Found a bug or have a feature request?</p>
+  <a class="btn btn-primary" href="https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/issues" target="_blank">🐛 Report Issue on GitHub</a>
+</section>
+
+<footer>
+  &copy; 2026 Deskrona. Built with Tauri &amp; Rust.
+</footer>
+
+<script>
+// Theme toggle
+const toggle = document.getElementById('themeToggle');
+const html = document.documentElement;
+const saved = localStorage.getItem('deskrona-theme');
+if (saved) html.setAttribute('data-theme', saved);
+updateToggle();
+
+toggle.addEventListener('click', () => {
+  const cur = html.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('deskrona-theme', next);
+  updateToggle();
+});
+
+function updateToggle() {
+  const cur = html.getAttribute('data-theme');
+  toggle.textContent = cur === 'dark' ? '☀️ Light' : '🌙 Dark';
+}
+
+// FAQ accordion
+document.querySelectorAll('.faq-question').forEach(q => {
+  q.addEventListener('click', () => {
+    const item = q.parentElement;
+    const open = item.classList.contains('open');
+    document.querySelectorAll('.faq-item.open').forEach(i => i.classList.remove('open'));
+    if (!open) item.classList.add('open');
+  });
+});
+</script>
+
+</body>
+</html>

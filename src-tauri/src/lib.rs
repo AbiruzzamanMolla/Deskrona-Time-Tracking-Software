@@ -11,6 +11,9 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
+use device_query::{DeviceQuery, DeviceState};
+
+static OVERLAY_POS: std::sync::Mutex<Option<tauri::PhysicalPosition<i32>>> = std::sync::Mutex::new(None);
 
 static TRAY_HANDLE: std::sync::OnceLock<tauri::tray::TrayIcon> = std::sync::OnceLock::new();
 
@@ -19,10 +22,12 @@ fn show_overlay_window(app: tauri::AppHandle, x: i32, y: i32, always_on_top: boo
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
         let _ = window.set_always_on_top(always_on_top);
-        // Apply click_through
         let _ = window.set_ignore_cursor_events(click_through);
         let _ = window.show();
         let _ = window.set_focus();
+        if let Ok(mut pos) = OVERLAY_POS.lock() {
+            *pos = Some(tauri::PhysicalPosition { x, y });
+        }
         Ok(())
     } else {
         Err("Overlay window not found".to_string())
@@ -59,8 +64,11 @@ fn start_drag_overlay(window: tauri::WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 fn move_overlay_window(window: tauri::WebviewWindow, x: i32, y: i32) -> Result<(), String> {
-    window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
-        .map_err(|e| e.to_string())
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+    if let Ok(mut pos) = OVERLAY_POS.lock() {
+        *pos = Some(tauri::PhysicalPosition { x, y });
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -416,6 +424,36 @@ pub fn run() {
             let _ = TRAY_HANDLE.set(tray);
 
             let app_handle_bg = app.handle().clone();
+            // Dedicated cursor polling thread for overlay click-through
+            let app_handle_cursor = app.handle().clone();
+            std::thread::spawn(move || {
+                let device_state = DeviceState::new();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    if let Some(window) = app_handle_cursor.get_webview_window("overlay") {
+                        if let Ok(settings) = db::get_settings(&app_handle_cursor) {
+                            if settings.overlay_enabled && settings.overlay_click_through {
+                                let status = tracking::get_tracking_status();
+                                if status != "stopped" {
+                                    if let Ok(pos_guard) = OVERLAY_POS.lock() {
+                                        if let Some(pos) = *pos_guard {
+                                            let mouse = device_state.get_mouse();
+                                            let btn_left = pos.x + 220 - 40;
+                                            let btn_right = pos.x + 220;
+                                            let btn_top = pos.y;
+                                            let btn_bottom = pos.y + 48;
+                                            let over_btn = mouse.coords.0 >= btn_left && mouse.coords.0 <= btn_right
+                                                && mouse.coords.1 >= btn_top && mouse.coords.1 <= btn_bottom;
+                                            let _ = window.set_ignore_cursor_events(!over_btn);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
             std::thread::spawn(move || {
                 let mut last_shown = false;
                 let mut last_status = String::new();
@@ -446,9 +484,13 @@ pub fn run() {
                         let should_show_overlay = settings.overlay_enabled && status != "stopped";
                         if should_show_overlay {
                             if let Some(window) = app_handle_bg.get_webview_window("overlay") {
-                                // Apply settings
                                 let _ = window.set_always_on_top(settings.overlay_always_on_top);
-                                let _ = window.set_ignore_cursor_events(settings.overlay_click_through);
+
+                                // Click-through is handled by the dedicated cursor thread
+                                // but ensure non-click-through mode still works
+                                if !settings.overlay_click_through {
+                                    let _ = window.set_ignore_cursor_events(false);
+                                }
                                 
                                 #[derive(Clone, Serialize)]
                                 struct OverlayUpdate {

@@ -20,40 +20,6 @@ pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // 1: running, 2: paused
 pub static TRACKING_START_TIME: Mutex<Option<DateTime<Local>>> = Mutex::new(None);
 pub static TRACKING_PAUSED_TIME: Mutex<Option<i64>> = Mutex::new(None);
 
-pub fn get_tracking_elapsed_seconds() -> i64 {
-    let status = get_tracking_status();
-    if status == "stopped" {
-        return 0;
-    }
-
-    if let Ok(start_guard) = TRACKING_START_TIME.lock() {
-        if let Some(start_time) = *start_guard {
-            let now = Local::now();
-            let mut elapsed = (now - start_time).num_seconds();
-
-            // Subtract completed pause durations
-            if let Ok(paused_guard) = TRACKING_PAUSED_TIME.lock() {
-                if let Some(paused_dur) = *paused_guard {
-                    elapsed -= paused_dur;
-                }
-            }
-
-            // Subtract current pause duration if we are currently paused
-            if status == "paused" {
-                if let Ok(pause_start_guard) = TRACKING_PAUSE_START.lock() {
-                    if let Some(pause_start) = *pause_start_guard {
-                        let current_pause = (now - pause_start).num_seconds();
-                        elapsed -= current_pause;
-                    }
-                }
-            }
-
-            return if elapsed > 0 { elapsed } else { 0 };
-        }
-    }
-    0
-}
-
 pub fn format_duration(seconds: i64) -> String {
     let hours = seconds / 3600;
     let mins = (seconds % 3600) / 60;
