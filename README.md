@@ -7,24 +7,35 @@ Built with **Tauri**, **Rust**, and **Vue 3**. All data stays on your machine.
 [![Platform](https://img.shields.io/badge/platform-Windows%2064%2F32-blue)](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases)
 [![License](https://img.shields.io/github/license/AbiruzzamanMolla/Deskrona-Time-Tracking-Software)](LICENSE)
 
----
-
-⬇️ [**Download Latest**](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases) — Windows 64-bit & 32-bit (MSI + EXE)
+⬇️ [**Download Latest**](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases)
 
 ---
 
-## 🚀 Features
+## ✨ Features
 
-- **Local-First** — SQLite storage, no cloud, complete privacy
-- **Real-Time Tracking** — Active app, window title, browser URL detection
-- **Idle Detection** — Keyboard & mouse inactivity tracking
-- **Screenshots** — Configurable interval, multi-monitor support
-- **Reports** — Daily/weekly/monthly/yearly dashboards
-- **Multi-User** — Company, admin, employee roles
-- **Theming** — Dark/light mode
-- **i18n** — English & Bengali
-- **System Tray** — Minimize to tray, tray timer
-- **Overlay** — Floating timer with pause/resume (optional)
+### 🔒 Local-First Privacy
+All data stored in SQLite on your machine. No cloud sync, no data leaks. Zero external network requests for tracking data.
+
+### ⏱ Real-Time Activity Tracking
+Automatically detects active windows, application names, and browser URLs. Tracks keyboard and mouse input for accurate active/idle time analysis.
+
+### 📸 Screenshot Monitoring
+Configurable interval screenshots with multi-monitor support. Full-screen preview with click-to-view. Disable anytime from settings.
+
+### 📊 Dashboard & Reports
+Daily, weekly, monthly, yearly views with dynamic date filtering. Stats include active time, idle time, keyboard count, mouse count, and productivity score.
+
+### 👥 Multi-User Mode
+Company/team mode with admin and employee roles. Admins can manage users, view team productivity, and control settings centrally.
+
+### 🖥 Floating Overlay
+Compact draggable timer overlay with pause/resume button. Works in click-through mode — click past the timer to interact with apps underneath. Only visible when tracking is active or paused. Disable anytime from settings.
+
+### 🌙 Themes & i18n
+Dark and light themes. English and Bengali localization. System tray integration with live timer tooltip.
+
+### 💾 Backup & Export
+Automated database backups with configurable frequency (daily/weekly/monthly). Manual export and import support for data portability.
 
 ## 🧱 Tech Stack
 
@@ -35,15 +46,11 @@ Built with **Tauri**, **Rust**, and **Vue 3**. All data stays on your machine.
 | Database | SQLite (rusqlite) |
 | Charts | Chart.js, vue-chartjs |
 | i18n | vue-i18n |
+| Tracking | active-win-pos-rs, device_query |
 
 ## 📦 Download
 
-Get the latest installer from [GitHub Releases](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases).
-
-| Architecture | Installer |
-|-------------|-----------|
-| 64-bit | `.msi` & `.exe` |
-| 32-bit | `.msi` & `.exe` |
+[GitHub Releases](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases) — Windows 64-bit & 32-bit MSI/EXE installers.
 
 ## 🛠️ Build from Source
 
