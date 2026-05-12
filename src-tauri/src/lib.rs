@@ -419,6 +419,7 @@ pub fn run() {
             let app_handle_bg = app.handle().clone();
             std::thread::spawn(move || {
                 let mut last_shown = false;
+                let mut last_status = String::new();
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     let status = tracking::get_tracking_status();
@@ -433,8 +434,12 @@ pub fn run() {
                     
                     if let Some(tray) = TRAY_HANDLE.get() {
                         let _ = tray.set_tooltip(Some(&tooltip));
-                        if let Ok(new_menu) = build_tray_menu(&app_handle_bg) {
-                            let _ = tray.set_menu(Some(new_menu));
+                        // Only rebuild menu when status changes to avoid console flash
+                        if status != last_status {
+                            if let Ok(new_menu) = build_tray_menu(&app_handle_bg) {
+                                let _ = tray.set_menu(Some(new_menu));
+                            }
+                            last_status = status.to_string();
                         }
                     }
 
@@ -444,8 +449,6 @@ pub fn run() {
                             if let Some(window) = app_handle_bg.get_webview_window("overlay") {
                                 // Apply settings
                                 let _ = window.set_always_on_top(settings.overlay_always_on_top);
-                                // Keep overlay interactive so drag strip and toggle button remain usable.
-                                let _ = settings.overlay_click_through;
                                 let _ = window.set_ignore_cursor_events(false);
                                 
                                 #[derive(Clone, Serialize)]
@@ -480,7 +483,6 @@ pub fn run() {
                                 last_shown = true;
                             }
                         } else {
-                            // Overlay disabled in settings - ensure it's hidden
                             if let Some(window) = app_handle_bg.get_webview_window("overlay") {
                                 let is_visible = window.is_visible().unwrap_or(false);
                                 if is_visible {

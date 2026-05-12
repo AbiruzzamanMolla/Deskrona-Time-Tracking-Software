@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use uuid::Uuid;
 use regex::Regex;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 use crate::db::get_db_path;
 use screenshots::Screen;
@@ -249,6 +251,7 @@ fn get_browser_url_windows(hwnd_str: &str) -> Option<String> {
         .arg("-NoProfile")
         .arg("-Command")
         .arg(script)
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW - no console flash
         .output()
         .ok()?;
 
