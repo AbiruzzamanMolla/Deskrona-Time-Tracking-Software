@@ -2,11 +2,15 @@
 
 All notable changes to **Deskrona** will be documented in this file.
 
-## [0.0.7] - 2026-05-07
+## [0.0.7] - 2026-05-12
 
 ### ✨ Added
 
 - **Automatic Update Check**: App now automatically checks for updates on startup.
+
+### 🐛 Fixed
+
+- **Terminal Flash**: Suppressed console window in release builds (`windows_subsystem = "windows"`).
 
 ### 🚀 Release
 
