@@ -505,6 +505,13 @@ pub fn run() {
                                 if !last_shown {
                                     let _ = window.show();
                                     last_shown = true;
+                                    // Store position for cursor thread
+                                    if let Ok(mut pos_guard) = OVERLAY_POS.lock() {
+                                        *pos_guard = Some(tauri::PhysicalPosition {
+                                            x: settings.overlay_position_x,
+                                            y: settings.overlay_position_y,
+                                        });
+                                    }
                                 }
                             } else {
                                 // Create overlay window
@@ -522,6 +529,13 @@ pub fn run() {
                                 .inner_size(220.0, 48.0)
                                 .position(settings.overlay_position_x as f64, settings.overlay_position_y as f64)
                                 .build();
+                                // Store position for cursor thread
+                                if let Ok(mut pos_guard) = OVERLAY_POS.lock() {
+                                    *pos_guard = Some(tauri::PhysicalPosition {
+                                        x: settings.overlay_position_x,
+                                        y: settings.overlay_position_y,
+                                    });
+                                }
                                 last_shown = true;
                             }
                         } else {
