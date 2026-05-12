@@ -30,7 +30,7 @@
       border: 1px solid rgba(168, 202, 237, 0.45);
       border-radius: 5px;
       cursor: move;
-      -webkit-app-region: no-drag;
+      -webkit-app-region: drag;
       position: relative;
     }
     .drag-strip::before {
@@ -219,24 +219,6 @@
     }
 
     init();
-
-    // Drag functionality
-    const overlay = document.getElementById('overlay');
-    const dragStrip = document.getElementById('dragStrip');
-    
-    dragStrip.addEventListener('mousedown', async () => {
-      try {
-        await invoke('start_drag_overlay');
-      } catch(e) {
-        console.error('Drag failed:', e);
-      }
-    });
-
-    document.addEventListener('mouseup', async () => {
-      try {
-        await invoke('end_drag_overlay');
-      } catch(e) {}
-    });
   </script>
 </body>
 </html>
