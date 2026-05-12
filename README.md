@@ -31,6 +31,9 @@ Company/team mode with admin and employee roles. Admins can manage users, view t
 ### 🖥 Floating Overlay
 Compact draggable timer overlay with pause/resume button. Works in click-through mode — click past the timer to interact with apps underneath. Only visible when tracking is active or paused. Disable anytime from settings.
 
+### 🍅 Pomodoro Timer
+Built-in pomodoro focus session system. Auto-starts with tracking. Countdown timer in sidebar and overlay. Auto-switches between focus (25min), short break (5min), and long break (15min after 4 sessions). Fully configurable durations. Sound notifications on phase change.
+
 ### 🌙 Themes & i18n
 Dark and light themes. English and Bengali localization. System tray integration with live timer tooltip.
 

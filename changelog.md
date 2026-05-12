@@ -7,10 +7,12 @@ All notable changes to **Deskrona** will be documented in this file.
 ### ✨ Added
 
 - **Automatic Update Check**: App now automatically checks for updates on startup.
+- **Pomodoro Timer**: Built-in pomodoro focus session system with auto-transition between focus, short break, and long break phases. Fully configurable durations in settings. Auto-starts with tracking. Countdown displayed in sidebar and overlay.
 
 ### 🐛 Fixed
 
 - **Terminal Flash**: Suppressed console window in release builds (`windows_subsystem = "windows"`).
+- **Click-through overlay**: Buttons and drag strip now remain interactive even in click-through mode.
 
 ### 🚀 Release
 

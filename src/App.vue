@@ -166,6 +166,41 @@ const overlayPosition = ref({ x: -1, y: 20 });
 const overlayElapsed = ref(0);
 let overlayInterval: any = null;
 
+// Pomodoro state
+const pomodoroPhase = ref("idle");
+const pomodoroRemaining = ref(0);
+const pomodoroCountToday = ref(0);
+
+const pomodoroFormatted = computed(() => {
+  const m = Math.floor(pomodoroRemaining.value / 60);
+  const s = pomodoroRemaining.value % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+});
+
+const syncPomodoro = async () => {
+  try {
+    const st = await invoke<any>("cmd_pomodoro_status");
+    pomodoroPhase.value = st.phase;
+    pomodoroRemaining.value = st.remaining_secs;
+    pomodoroCountToday.value = st.count_today;
+  } catch {}
+};
+
+const startPomodoro = async () => {
+  await invoke("cmd_pomodoro_start");
+  await syncPomodoro();
+};
+
+const skipPomodoro = async () => {
+  await invoke("cmd_pomodoro_skip");
+  await syncPomodoro();
+};
+
+const stopPomodoro = async () => {
+  await invoke("cmd_pomodoro_stop");
+  await syncPomodoro();
+};
+
 const showOverlay = async () => {
   try {
     await invoke("show_overlay_window", {
@@ -878,6 +913,8 @@ const initApp = async () => {
   // Wait for session to be fully restored/validated
   await loadActiveSession();
   await loadTrackingStatus();
+  await syncPomodoro();
+  await listen<string>("pomodoro-phase-changed", () => syncPomodoro());
   
   // Force multiple refreshes to ensure sync
   // Try to get initial data multiple times in case of DB lock or slow start
@@ -930,6 +967,10 @@ const initApp = async () => {
       pauseStartedAt = null;
     }
     trackingStatus.value = newStatus;
+    // Auto-start pomodoro when tracking starts
+    if (newStatus === "running" && pomodoroPhase.value === "idle" && settings.value?.pomodoro_auto_start) {
+      startPomodoro();
+    }
   });
 };
 
@@ -1443,20 +1484,18 @@ const doChangeMode = async () => {
 
       <!-- Session Control in Sidebar -->
       <div class="session-control">
-        <div v-if="activeSession" class="session-active">
+        <div v-if="pomodoroPhase !== 'idle'" class="session-active">
           <span class="pulse-dot"></span>
-          <span>{{ t("message.sessionActive") }}</span>
+          <span>{{ pomodoroPhase === 'focus' ? t("message.pomodoroFocus") : t("message.pomodoroBreak") }}</span>
+          <div class="pomodoro-timer">{{ pomodoroFormatted }}</div>
+          <div class="pomodoro-count">🍅 {{ pomodoroCountToday }}</div>
           <div v-if="trackingStatus === 'running' && dashboardData.app_stats.length > 0" class="current-activity-mini">
             <small>{{ t("message.viewing") }} {{ dashboardData.app_stats[0].app_name }}</small>
           </div>
-          <button class="btn-stop" @click="stopSession">
-            ⏹ {{ t("message.stopSession") }}
-          </button>
+          <button class="btn-stop" @click="stopPomodoro">⏹ {{ t("message.pomodoroEnd") }}</button>
         </div>
         <div v-else class="session-inactive">
-          <button class="btn-start" @click="startSession">
-            ▶ {{ t("message.startSession") }}
-          </button>
+          <button class="btn-start" @click="startPomodoro">▶ {{ t("message.pomodoroStart") }}</button>
         </div>
       </div>
 
@@ -2252,6 +2291,41 @@ const doChangeMode = async () => {
             </div>
           </section>
 
+          <!-- Pomodoro Settings -->
+          <section class="settings-section">
+            <h2 class="section-title">🍅 {{ t("message.pomodoro") || "Pomodoro" }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card">
+                <label>{{ t("message.pomodoroFocusDuration") || "Focus Duration" }}</label>
+                <input type="number" v-model.number="settings.pomodoro_focus_minutes" min="1" max="120" />
+                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t("message.pomodoroBreakDuration") || "Break Duration" }}</label>
+                <input type="number" v-model.number="settings.pomodoro_short_break_minutes" min="1" max="30" />
+                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t("message.pomodoroLongBreak") || "Long Break" }}</label>
+                <input type="number" v-model.number="settings.pomodoro_long_break_minutes" min="1" max="60" />
+                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t("message.pomodoroBeforeLong") || "Pomodoros before long break" }}</label>
+                <input type="number" v-model.number="settings.pomodoro_sessions_before_long" min="1" max="10" />
+              </div>
+              <div class="card setting-card">
+                <label>{{ t("message.pomodoroAutoStart") || "Auto-start with tracking" }}</label>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="settings.pomodoro_auto_start" @change="saveSettings" />
+                  <span :style="{ color: settings.pomodoro_auto_start ? 'var(--success)' : 'var(--text-muted)' }">
+                    {{ settings.pomodoro_auto_start ? t("message.enabled") : t("message.disabled") }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <!-- 3. Storage & Backup -->
           <section class="settings-section">
             <h2 class="section-title">📁 {{ t("message.storage") }}</h2>
@@ -3034,6 +3108,20 @@ nav button.active {
   border-radius: 50%;
   animation: pulse 1.5s infinite;
   display: inline-block;
+}
+
+.pomodoro-timer {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  margin: 4px 0;
+}
+
+.pomodoro-count {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
 
 @keyframes pulse {

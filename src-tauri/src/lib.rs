@@ -17,6 +17,67 @@ static OVERLAY_POS: std::sync::Mutex<Option<tauri::PhysicalPosition<i32>>> = std
 
 static TRAY_HANDLE: std::sync::OnceLock<tauri::tray::TrayIcon> = std::sync::OnceLock::new();
 
+// Pomodoro state (in-memory, no DB)
+#[derive(Clone, Serialize)]
+struct PomodoroState {
+    phase: String,       // idle, focus, short_break, long_break
+    remaining_secs: i32,
+    count_today: i32,
+    total_today: i32,    // focus count today
+}
+
+static POMODORO_PHASE: std::sync::Mutex<&'static str> = std::sync::Mutex::new("idle");
+static POMODORO_REMAINING: std::sync::Mutex<i32> = std::sync::Mutex::new(0);
+static POMODORO_FOCUS_TODAY: std::sync::Mutex<i32> = std::sync::Mutex::new(0);
+
+fn get_pomodoro_state() -> PomodoroState {
+    let phase = POMODORO_PHASE.lock().unwrap();
+    let remaining = *POMODORO_REMAINING.lock().unwrap();
+    let count = *POMODORO_FOCUS_TODAY.lock().unwrap();
+    PomodoroState { phase: phase.to_string(), remaining_secs: remaining, count_today: count, total_today: count }
+}
+
+fn reset_pomodoro() {
+    *POMODORO_PHASE.lock().unwrap() = "idle";
+    *POMODORO_REMAINING.lock().unwrap() = 0;
+}
+
+fn set_pomodoro_phase(phase: &'static str, remaining: i32) {
+    *POMODORO_PHASE.lock().unwrap() = phase;
+    *POMODORO_REMAINING.lock().unwrap() = remaining;
+}
+
+#[tauri::command]
+fn cmd_pomodoro_start(app: tauri::AppHandle) -> Result<PomodoroState, String> {
+    let settings = db::get_settings(&app).map_err(|e| e.to_string())?;
+    set_pomodoro_phase("focus", settings.pomodoro_focus_minutes * 60);
+    Ok(get_pomodoro_state())
+}
+
+#[tauri::command]
+fn cmd_pomodoro_skip(app: tauri::AppHandle) -> Result<PomodoroState, String> {
+    let current = POMODORO_PHASE.lock().unwrap().clone();
+    if current == "idle" {
+        return Ok(get_pomodoro_state());
+    }
+    let settings = db::get_settings(&app).map_err(|e| e.to_string())?;
+    if current == "focus" || current == "short_break" || current == "long_break" {
+        set_pomodoro_phase("focus", settings.pomodoro_focus_minutes * 60);
+    }
+    Ok(get_pomodoro_state())
+}
+
+#[tauri::command]
+fn cmd_pomodoro_stop() -> Result<PomodoroState, String> {
+    reset_pomodoro();
+    Ok(get_pomodoro_state())
+}
+
+#[tauri::command]
+fn cmd_pomodoro_status() -> Result<PomodoroState, String> {
+    Ok(get_pomodoro_state())
+}
+
 #[tauri::command]
 fn show_overlay_window(app: tauri::AppHandle, x: i32, y: i32, always_on_top: bool, click_through: bool) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("overlay") {
@@ -566,6 +627,39 @@ pub fn run() {
                             last_shown = false;
                         }
                     }
+
+                    // Pomodoro tick
+                    {
+                        let phase = *POMODORO_PHASE.lock().unwrap();
+                        if phase != "idle" {
+                            let mut remaining = POMODORO_REMAINING.lock().unwrap();
+                            if *remaining > 0 {
+                                *remaining -= 1;
+                            }
+                            if *remaining <= 0 {
+                                let settings = db::get_settings(&app_handle_bg).ok();
+                                match phase {
+                                    "focus" => {
+                                        let mut count = POMODORO_FOCUS_TODAY.lock().unwrap();
+                                        *count += 1;
+                                        let max = settings.as_ref().map(|s| s.pomodoro_sessions_before_long).unwrap_or(4);
+                                        if *count >= max {
+                                            set_pomodoro_phase("long_break", settings.as_ref().map(|s| s.pomodoro_long_break_minutes * 60).unwrap_or(900));
+                                        } else {
+                                            set_pomodoro_phase("short_break", settings.as_ref().map(|s| s.pomodoro_short_break_minutes * 60).unwrap_or(300));
+                                        }
+                                    },
+                                    _ => {
+                                        set_pomodoro_phase("focus", settings.as_ref().map(|s| s.pomodoro_focus_minutes * 60).unwrap_or(1500));
+                                    },
+                                };
+                                drop(remaining);
+                                let _ = app_handle_bg.emit("pomodoro-phase-changed", get_pomodoro_state());
+                            } else {
+                                drop(remaining);
+                            }
+                        }
+                    }
                 }
             });
 
@@ -613,6 +707,10 @@ pub fn run() {
             show_overlay_window,
             hide_overlay_window,
             update_overlay_time,
+            cmd_pomodoro_start,
+            cmd_pomodoro_skip,
+            cmd_pomodoro_stop,
+            cmd_pomodoro_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

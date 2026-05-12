@@ -123,6 +123,9 @@
         <span class="status-label" style="font-size: 9px; opacity: 0.5;">TODAY</span>
       </div>
       <span class="time-display" id="timeDisplay">00:00:00</span>
+      <div id="pomodoroDisplay" style="display:none; color:rgba(255,255,255,0.6); font-size:10px; margin-top:1px;">
+        <span id="pomodoroPhase"></span> <span id="pomodoroTimer"></span>
+      </div>
     </div>
     <button class="control-btn" id="toggleBtn" title="Pause tracking">⏸</button>
   </div>
@@ -188,9 +191,32 @@
         }
       }
 
+      async function syncPomodoro() {
+        try {
+          const st = await invoke('cmd_pomodoro_status');
+          const pd = document.getElementById('pomodoroDisplay');
+          const pp = document.getElementById('pomodoroPhase');
+          const pt = document.getElementById('pomodoroTimer');
+          if (st.phase !== 'idle') {
+            pd.style.display = 'block';
+            const emoji = st.phase === 'focus' ? '🍅' : '☕';
+            pp.textContent = emoji + ' ' + (st.phase === 'focus' ? 'Focus' : 'Break');
+            const m = Math.floor(st.remaining_secs / 60);
+            const s = st.remaining_secs % 60;
+            pt.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+          } else {
+            pd.style.display = 'none';
+          }
+        } catch (e) {}
+      }
+
       // Initial status
       await syncFromApi();
-      syncInterval = setInterval(syncFromApi, 1000);
+      await syncPomodoro();
+      syncInterval = setInterval(() => {
+        syncFromApi();
+        syncPomodoro();
+      }, 1000);
 
       // Listen for updates from backend
       await listen('update-overlay', (event) => {
@@ -202,6 +228,8 @@
       await listen('tracking-status-changed', (event) => {
         updateUI(event.payload);
       });
+
+      await listen('pomodoro-phase-changed', () => syncPomodoro());
 
       async function setTracking(status) {
         try {
