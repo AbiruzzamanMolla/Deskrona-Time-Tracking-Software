@@ -7,7 +7,7 @@ Built with **Tauri**, **Rust**, and **Vue 3**. All data stays on your machine.
 [![Platform](https://img.shields.io/badge/platform-Windows%2064%2F32-blue)](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases)
 [![License](https://img.shields.io/github/license/AbiruzzamanMolla/Deskrona-Time-Tracking-Software)](LICENSE)
 
-⬇️ [**Download Latest**](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases)
+⬇️ [**Download Latest**](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases) · [❤️ **Support Me**](https://www.supportkori.com/abiruzzaman)
 
 ---
 
