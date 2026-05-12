@@ -1,60 +1,60 @@
 # 🛡️ Deskrona
 
-**Deskrona** is a local-first, privacy-focused, cross-platform time tracking and productivity monitoring application. Built with **Tauri**, **Rust**, and **Vue 3**, it ensures all your data stays on your machine while providing a premium, high-performance experience.
+**Local-first, privacy-focused time tracking & productivity monitoring.**  
+Built with **Tauri**, **Rust**, and **Vue 3**. All data stays on your machine.
 
-## 🚀 Key Features
+[![GitHub Release](https://img.shields.io/github/v/release/AbiruzzamanMolla/Deskrona-Time-Tracking-Software)](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%2064%2F32-blue)](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases)
+[![License](https://img.shields.io/github/license/AbiruzzamanMolla/Deskrona-Time-Tracking-Software)](LICENSE)
 
-- **Local-First Architecture**: Your data never leaves your computer. SQLite-based storage for high performance and privacy.
-- **Advanced Monitoring**: Automated multi-monitor screenshot capture at configurable intervals.
-- **Intelligent Tracking**: Automatic detection of active applications, window titles, and browser URLs.
-- **Powerful Reporting**: Specialized dashboard views with dynamic date-range filtering (Daily, Weekly, Monthly, Yearly, Custom).
-- **Idle Detection**: Tracks keyboard and mouse inactivity to provide accurate "Active vs. Idle" time analysis.
-- **Backup & Data Integrity**: Automated, configurable database backups with manual export and import support.
-- **Cross-Platform**: Windows installer support (32/64-bit EXE and MSI).
-- **Multilingual Support**: Fully localized in English and Bengali.
-- **Theming**: Premium Dark/Light mode support.
+---
+
+⬇️ [**Download Latest**](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases) — Windows 64-bit & 32-bit (MSI + EXE)
+
+---
+
+## 🚀 Features
+
+- **Local-First** — SQLite storage, no cloud, complete privacy
+- **Real-Time Tracking** — Active app, window title, browser URL detection
+- **Idle Detection** — Keyboard & mouse inactivity tracking
+- **Screenshots** — Configurable interval, multi-monitor support
+- **Reports** — Daily/weekly/monthly/yearly dashboards
+- **Multi-User** — Company, admin, employee roles
+- **Theming** — Dark/light mode
+- **i18n** — English & Bengali
+- **System Tray** — Minimize to tray, tray timer
+- **Overlay** — Floating timer with pause/resume (optional)
 
 ## 🧱 Tech Stack
 
-- **Frontend**: Vue 3, TypeScript, Vite
-- **Backend**: Rust, Tauri
-- **Database**: SQLite (via `rusqlite`)
-- **i18n**: `vue-i18n`
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Vue 3, TypeScript, Vite |
+| Backend | Rust, Tauri 2 |
+| Database | SQLite (rusqlite) |
+| Charts | Chart.js, vue-chartjs |
+| i18n | vue-i18n |
 
-## 🛠️ Getting Started
+## 📦 Download
 
-### Prerequisites
+Get the latest installer from [GitHub Releases](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software/releases).
 
-- [Node.js](https://nodejs.org/) (latest LTS)
-- [Rust](https://www.rust-lang.org/)
-- [Tauri CLI](https://tauri.app/v1/guides/getting-started/prerequisites)
+| Architecture | Installer |
+|-------------|-----------|
+| 64-bit | `.msi` & `.exe` |
+| 32-bit | `.msi` & `.exe` |
 
-### Installation
+## 🛠️ Build from Source
 
-1. Clone the repository:
-
-   ```bash
-   git clone https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software.git
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   npm install
-   ```
-
-3. Run in development mode:
-   ```bash
-   npm run tauri dev
-   ```
-
-## 📝 Project Structure
-
-- `src/`: Frontend Vue 3 application logic.
-- `src-tauri/`: Rust backend, database management, and tracking logic.
-- `project.md`: Detailed project architecture and roadmap.
-- `todo.md`: Active task tracking.
+```bash
+git clone https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software.git
+cd Deskrona-Time-Tracking-Software
+npm install
+npm run tauri dev     # dev mode
+npm run tauri build   # production build
+```
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT
