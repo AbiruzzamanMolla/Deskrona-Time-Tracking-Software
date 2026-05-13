@@ -193,6 +193,11 @@ fn cmd_get_dashboard_data(app_handle: tauri::AppHandle) -> Result<db::DashboardD
 }
 
 #[tauri::command]
+fn cmd_get_filtered_dashboard_data(app_handle: tauri::AppHandle, from: String, to: String) -> Result<db::DashboardData, String> {
+    db::get_filtered_dashboard_data(&app_handle, &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn cmd_set_tracking(app_handle: tauri::AppHandle, status: String) -> Result<(), String> {
     tracking::set_tracking_status(&status);
     let _ = app_handle.emit("tracking-status-changed", &status);
@@ -679,6 +684,7 @@ pub fn run() {
             cmd_stop_session,
             cmd_get_active_session,
             cmd_get_dashboard_data,
+            cmd_get_filtered_dashboard_data,
             cmd_set_tracking,
             cmd_get_tracking,
             start_drag_overlay,

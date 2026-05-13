@@ -824,6 +824,9 @@ const loadFilteredData = async (append = false) => {
       ]);
       userActivityList.value = append ? [...userActivityList.value, ...acts] : acts;
       userInputStats.value = stats;
+    } else if (currentView.value === "productivity") {
+      const data = await invoke<DashboardData>("cmd_get_filtered_dashboard_data", { from, to });
+      dashboardData.value = data;
     }
   } catch (e) {
     console.error("Failed to load filtered data", e);
@@ -2006,7 +2009,7 @@ const doChangeMode = async () => {
           </div>
         </header>
 
-        <div class="activity-summary-row" style="display: flex; gap: 24px; padding: 0 16px 24px 16px">
+        <div class="activity-summary-row">
           <div class="card activity-stat-card"
             style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
             <div class="stat-icon" style="
@@ -2133,7 +2136,7 @@ const doChangeMode = async () => {
           </div>
         </div>
 
-        <div class="productivity-grid" style="display: grid; grid-template-columns: 1fr 2fr; gap: 24px; padding: 16px">
+        <div class="productivity-grid">
           <div class="card chart-container" style="height: 300px">
             <h3>{{ t("message.productivityBreakdown") }}</h3>
             <Pie :data="productivityChartData" :options="productivityChartOptions" />
@@ -3417,6 +3420,20 @@ header h1 {
 
 .big-stat.total {
   color: var(--text-color);
+}
+
+/* Productivity grid default */
+.activity-summary-row {
+  display: flex;
+  gap: 24px;
+  padding: 0 16px 24px 16px;
+}
+
+.productivity-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 24px;
+  padding: 16px;
 }
 
 @media (max-width: 980px) {

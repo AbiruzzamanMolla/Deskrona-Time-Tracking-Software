@@ -588,6 +588,75 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     })
 }
 
+pub fn get_filtered_dashboard_data(app: &AppHandle, from: &str, to: &str) -> Result<DashboardData> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+
+    let total_active: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time) >= ?2 AND date(start_time) <= ?3",
+        params![user_id, from, to], |r| r.get(0),
+    )?;
+
+    let total_idle: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(
+            CAST((julianday(
+                COALESCE(
+                    (SELECT MIN(t2.timestamp) FROM activity_events t2 WHERE t2.type = 'idle_end' AND t2.timestamp > t1.timestamp AND t2.user_id = t1.user_id),
+                    datetime('now')
+                )
+            ) - julianday(t1.timestamp)) * 86400 AS INTEGER)
+        ), 0) FROM activity_events t1 WHERE t1.user_id = ?1 AND t1.type = 'idle_start' AND date(t1.timestamp) >= ?2 AND date(t1.timestamp) <= ?3",
+        params![user_id, from, to], |r| r.get(0),
+    )?;
+
+    let session_seconds: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(
+            CAST((julianday(COALESCE(end_time, datetime('now'))) - julianday(start_time)) * 86400 AS INTEGER)
+        ), 0) FROM sessions WHERE user_id = ?1 AND date(start_time) >= ?2 AND date(start_time) <= ?3",
+        params![user_id, from, to], |r| r.get(0),
+    )?;
+
+    let app_stats: Vec<AppUsageStat> = {
+        let mut stmt = conn.prepare(
+            "SELECT t.app_name, SUM(t.duration) as total_secs, COUNT(*) as cnt, COALESCE(c.category, 'neutral') as cat 
+             FROM time_logs t 
+             LEFT JOIN app_categories c ON t.app_name = c.app_name 
+             WHERE t.user_id = ?1 AND date(t.start_time) >= ?2 AND date(t.start_time) <= ?3 
+             GROUP BY t.app_name 
+             ORDER BY total_secs DESC LIMIT 100"
+        )?;
+        let rows = stmt.query_map(params![user_id, from, to], |row| {
+            Ok(AppUsageStat {
+                app_name: row.get(0)?,
+                total_seconds: row.get(1)?,
+                session_count: row.get(2)?,
+                category: row.get(3)?,
+            })
+        })?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let recent_urls: Vec<UrlEntry> = Vec::new();
+
+    let keyboard_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'keyboard' AND date(timestamp) >= ?2 AND date(timestamp) <= ?3",
+        params![user_id, from, to], |r| r.get(0))?;
+    let mouse_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'mouse' AND date(timestamp) >= ?2 AND date(timestamp) <= ?3",
+        params![user_id, from, to], |r| r.get(0))?;
+
+    Ok(DashboardData {
+        total_active_seconds: total_active,
+        total_idle_seconds: total_idle,
+        session_seconds,
+        app_stats,
+        recent_urls,
+        keyboard_count,
+        mouse_count,
+    })
+}
+
 // ─── Date-Range Query: Time Logs (Trackings) ─────────────────────
 
 #[derive(Serialize, Deserialize, Debug)]
