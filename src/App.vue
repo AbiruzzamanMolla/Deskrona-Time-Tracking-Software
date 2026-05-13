@@ -1534,7 +1534,7 @@ const doChangeMode = async () => {
       <div v-if="currentView === 'dashboard'" class="view-dashboard">
         <header class="view-header">
           <h1>{{ t("message.todaySummary") }}</h1>
-          <button class="btn-browse" @click="refreshDashboard" style="padding: 6px 12px; font-size: 0.9rem">
+          <button class="btn-browse" @click="refreshDashboard">
             🔄 {{ t("message.refresh") }}
           </button>
         </header>
@@ -1694,7 +1694,7 @@ const doChangeMode = async () => {
         <header class="view-header">
           <h1>{{ t("message.trackings") }}</h1>
           <div class="filter-controls">
-            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size: 0.9rem">
+            <button class="btn-browse" @click="loadFilteredData(false)">
               🔄 {{ t("message.refresh") }}
             </button>
             <select v-model="filterType">
@@ -1749,7 +1749,7 @@ const doChangeMode = async () => {
         <header class="view-header">
           <h1>{{ t("message.urls") }}</h1>
           <div class="filter-controls">
-            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size: 0.9rem">
+            <button class="btn-browse" @click="loadFilteredData(false)">
               🔄 {{ t("message.refresh") }}
             </button>
             <select v-model="filterType">
@@ -1796,7 +1796,7 @@ const doChangeMode = async () => {
         <header class="view-header">
           <h1>{{ t("message.detailedActivity") }}</h1>
           <div class="filter-controls">
-            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size: 0.9rem">
+            <button class="btn-browse" @click="loadFilteredData(false)">
               🔄 {{ t("message.refresh") }}
             </button>
             <select v-model="filterType">
@@ -1945,7 +1945,7 @@ const doChangeMode = async () => {
         <header class="view-header">
           <h1>{{ t("message.screenshots") }}</h1>
           <div class="filter-controls">
-            <button class="btn-browse" @click="loadFilteredData(false)" style="padding: 6px 12px; font-size: 0.9rem">
+            <button class="btn-browse" @click="loadFilteredData(false)">
               🔄 {{ t("message.refresh") }}
             </button>
             <select v-model="filterType">
@@ -1987,9 +1987,98 @@ const doChangeMode = async () => {
       <div v-if="currentView === 'productivity'" class="view-productivity">
         <header>
           <h1>{{ t("message.productivity") }}</h1>
+          <div class="filter-controls">
+            <button class="btn-browse" @click="loadFilteredData(false)">
+              🔄 {{ t("message.refresh") }}
+            </button>
+            <select v-model="filterType">
+              <option value="daily">{{ t("message.filterDaily") }}</option>
+              <option value="weekly">{{ t("message.filterWeekly") }}</option>
+              <option value="monthly">{{ t("message.filterMonthly") }}</option>
+              <option value="yearly">{{ t("message.filterYearly") }}</option>
+              <option value="custom">{{ t("message.filterCustom") }}</option>
+            </select>
+            <template v-if="filterType === 'custom'">
+              <input type="date" v-model="customFromDate" />
+              <span> - </span>
+              <input type="date" v-model="customToDate" />
+            </template>
+          </div>
         </header>
 
         <div class="activity-summary-row" style="display: flex; gap: 24px; padding: 0 16px 24px 16px">
+          <div class="card activity-stat-card"
+            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
+            <div class="stat-icon" style="
+                background: rgba(95, 139, 184, 0.2);
+                color: var(--accent);
+                width: 48px;
+                height: 48px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 1.5rem;
+              ">
+              ⏱
+            </div>
+            <div>
+              <div style="font-size: 0.9rem; color: var(--text-muted)">
+                {{ t("message.totalTime") || "Total Time" }}
+              </div>
+              <div style="font-size: 1.5rem; font-weight: 700">
+                {{ formatTime(dashboardData.total_active_seconds + dashboardData.total_idle_seconds) }}
+              </div>
+            </div>
+          </div>
+          <div class="card activity-stat-card"
+            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
+            <div class="stat-icon" style="
+                background: rgba(76, 175, 80, 0.2);
+                color: var(--success);
+                width: 48px;
+                height: 48px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 1.5rem;
+              ">
+              ▶
+            </div>
+            <div>
+              <div style="font-size: 0.9rem; color: var(--text-muted)">
+                {{ t("message.activeTime") }}
+              </div>
+              <div style="font-size: 1.5rem; font-weight: 700">
+                {{ formatTime(dashboardData.total_active_seconds) }}
+              </div>
+            </div>
+          </div>
+          <div class="card activity-stat-card"
+            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
+            <div class="stat-icon" style="
+                background: rgba(244, 67, 54, 0.2);
+                color: var(--danger);
+                width: 48px;
+                height: 48px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 1.5rem;
+              ">
+              ⏸
+            </div>
+            <div>
+              <div style="font-size: 0.9rem; color: var(--text-muted)">
+                {{ t("message.idleTime") }}
+              </div>
+              <div style="font-size: 1.5rem; font-weight: 700">
+                {{ formatTime(dashboardData.total_idle_seconds) }}
+              </div>
+            </div>
+          </div>
           <div class="card activity-stat-card"
             style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
             <div class="stat-icon" style="
@@ -2447,7 +2536,7 @@ const doChangeMode = async () => {
                 color: var(--text-color);
                 font-size: 0.9rem;
               " />
-            <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size: 0.9rem">
+            <button class="btn-browse" @click="loadAdminData">
               🔄 {{ t("message.refresh") }}
             </button>
           </div>
@@ -2502,7 +2591,7 @@ const doChangeMode = async () => {
                 margin-bottom: 16px;
               ">
               <h2>{{ t("message.manageAppCategories") }}</h2>
-              <button class="btn-browse" @click="loadAdminData" style="padding: 6px 12px; font-size: 0.85rem">
+              <button class="btn-browse" @click="loadAdminData">
                 🔄 {{ t("message.reloadList") }}
               </button>
             </div>
@@ -3847,14 +3936,17 @@ input[type="checkbox"] {
   background: var(--bg-color);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 0 16px;
+  padding: 8px 14px;
   cursor: pointer;
   transition: all 0.2s ease;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.2rem;
+  gap: 4px;
+  font-size: 0.9rem;
   color: var(--text-color);
+  height: 36px;
+  white-space: nowrap;
 }
 
 .btn-browse:hover {

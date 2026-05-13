@@ -2,6 +2,18 @@
 
 All notable changes to **Deskrona** will be documented in this file.
 
+## [0.0.8] - 2026-05-12
+
+### ✨ Added
+
+- **Productivity Tab**: Added Total Time, Active Time, and Idle Time stat cards with date filter (daily/weekly/monthly/custom).
+- **Overlay Pomodoro**: Timer shows remaining time in focus mode. "TODAY" label changes to "REMAINING" during focus, "BREAK" during break.
+
+### 🐛 Fixed
+
+- **Pomodoro Hang**: Fixed Mutex deadlock in background thread that caused app to freeze when pomodoro phase completed.
+- **Refresh Buttons**: Standardized design across all tabs to match select box height and font size.
+
 ## [0.0.7] - 2026-05-12
 
 ### ✨ Added

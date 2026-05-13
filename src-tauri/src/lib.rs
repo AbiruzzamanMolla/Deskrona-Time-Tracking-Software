@@ -632,31 +632,35 @@ pub fn run() {
                     {
                         let phase = *POMODORO_PHASE.lock().unwrap();
                         if phase != "idle" {
-                            let mut remaining = POMODORO_REMAINING.lock().unwrap();
-                            if *remaining > 0 {
-                                *remaining -= 1;
-                            }
-                            if *remaining <= 0 {
+                            let remaining = {
+                                let mut r = POMODORO_REMAINING.lock().unwrap();
+                                if *r > 0 { *r -= 1; }
+                                *r
+                            };
+                            if remaining <= 0 {
                                 let settings = db::get_settings(&app_handle_bg).ok();
                                 match phase {
                                     "focus" => {
-                                        let mut count = POMODORO_FOCUS_TODAY.lock().unwrap();
-                                        *count += 1;
+                                        let count = {
+                                            let mut c = POMODORO_FOCUS_TODAY.lock().unwrap();
+                                            *c += 1;
+                                            *c
+                                        };
                                         let max = settings.as_ref().map(|s| s.pomodoro_sessions_before_long).unwrap_or(4);
-                                        if *count >= max {
-                                            set_pomodoro_phase("long_break", settings.as_ref().map(|s| s.pomodoro_long_break_minutes * 60).unwrap_or(900));
+                                        if count >= max {
+                                            let secs = settings.as_ref().map(|s| s.pomodoro_long_break_minutes * 60).unwrap_or(900);
+                                            set_pomodoro_phase("long_break", secs);
                                         } else {
-                                            set_pomodoro_phase("short_break", settings.as_ref().map(|s| s.pomodoro_short_break_minutes * 60).unwrap_or(300));
+                                            let secs = settings.as_ref().map(|s| s.pomodoro_short_break_minutes * 60).unwrap_or(300);
+                                            set_pomodoro_phase("short_break", secs);
                                         }
                                     },
                                     _ => {
-                                        set_pomodoro_phase("focus", settings.as_ref().map(|s| s.pomodoro_focus_minutes * 60).unwrap_or(1500));
+                                        let secs = settings.as_ref().map(|s| s.pomodoro_focus_minutes * 60).unwrap_or(1500);
+                                        set_pomodoro_phase("focus", secs);
                                     },
                                 };
-                                drop(remaining);
                                 let _ = app_handle_bg.emit("pomodoro-phase-changed", get_pomodoro_state());
-                            } else {
-                                drop(remaining);
                             }
                         }
                     }

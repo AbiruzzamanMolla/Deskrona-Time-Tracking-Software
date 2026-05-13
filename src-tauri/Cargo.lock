@@ -5064,7 +5064,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "active-win-pos-rs",
  "argon2",
