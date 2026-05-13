@@ -159,6 +159,7 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
         ("pomodoro_long_break_minutes", "ALTER TABLE settings ADD COLUMN pomodoro_long_break_minutes INTEGER NOT NULL DEFAULT 15"),
         ("pomodoro_sessions_before_long", "ALTER TABLE settings ADD COLUMN pomodoro_sessions_before_long INTEGER NOT NULL DEFAULT 4"),
         ("pomodoro_auto_start", "ALTER TABLE settings ADD COLUMN pomodoro_auto_start INTEGER NOT NULL DEFAULT 1"),
+        ("pomodoro_sound_enabled", "ALTER TABLE settings ADD COLUMN pomodoro_sound_enabled INTEGER NOT NULL DEFAULT 1"),
         ("deleted_at", "ALTER TABLE settings ADD COLUMN deleted_at TEXT"),
     ];
 
@@ -228,6 +229,7 @@ pub struct Settings {
     pub pomodoro_long_break_minutes: i32,
     pub pomodoro_sessions_before_long: i32,
     pub pomodoro_auto_start: bool,
+    pub pomodoro_sound_enabled: bool,
 }
 
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
@@ -236,7 +238,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let user_id = crate::tracking::get_active_user_id();
     
     // Try to get settings for the active user
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1) FROM settings WHERE user_id = ?1 LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1) FROM settings WHERE user_id = ?1 LIMIT 1")?;
     
     let result = stmt.query_row(params![user_id], |row| {
         Ok(Settings {
@@ -261,6 +263,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             pomodoro_long_break_minutes: row.get(18)?,
             pomodoro_sessions_before_long: row.get(19)?,
             pomodoro_auto_start: row.get::<_, i32>(20)? != 0,
+            pomodoro_sound_enabled: row.get::<_, i32>(21)? != 0,
         })
     });
 
@@ -270,8 +273,8 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             // Create default settings for this user
             let now = chrono::Utc::now().to_rfc3339();
             conn.execute(
-                "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, idle_monitor_mouse, idle_monitor_keyboard, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, pomodoro_focus_minutes, pomodoro_short_break_minutes, pomodoro_long_break_minutes, pomodoro_sessions_before_long, pomodoro_auto_start, created_at, updated_at)
-                 VALUES (?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 1, 1, 0, 100, 100, 25, 5, 15, 4, 1, ?3, ?3)",
+                "INSERT INTO settings (id, user_id, language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, idle_threshold, idle_monitor_mouse, idle_monitor_keyboard, is_screenshot_enabled, overlay_enabled, overlay_always_on_top, overlay_click_through, overlay_position_x, overlay_position_y, pomodoro_focus_minutes, pomodoro_short_break_minutes, pomodoro_long_break_minutes, pomodoro_sessions_before_long, pomodoro_auto_start, pomodoro_sound_enabled, created_at, updated_at)
+                 VALUES (?1, ?2, 'en', 'system', 0, 10, '', 'never', '', 5, 1, 1, 1, 1, 1, 0, 100, 100, 25, 5, 15, 4, 1, 1, ?3, ?3)",
                 (
                     uuid::Uuid::new_v4().to_string(),
                     &user_id,
@@ -302,6 +305,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
                 pomodoro_long_break_minutes: 15,
                 pomodoro_sessions_before_long: 4,
                 pomodoro_auto_start: true,
+                pomodoro_sound_enabled: true,
             })
         }
         Err(e) => Err(e),
@@ -335,8 +339,9 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             pomodoro_long_break_minutes = ?19,
             pomodoro_sessions_before_long = ?20,
             pomodoro_auto_start = ?21,
-            updated_at = ?22 
-        WHERE user_id = ?23",
+            pomodoro_sound_enabled = ?22,
+            updated_at = ?23 
+        WHERE user_id = ?24",
         params![
             settings.language,
             settings.theme,
@@ -359,6 +364,7 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.pomodoro_long_break_minutes,
             settings.pomodoro_sessions_before_long,
             settings.pomodoro_auto_start as i32,
+            settings.pomodoro_sound_enabled as i32,
             now,
             crate::tracking::get_active_user_id()
         ],

@@ -191,6 +191,39 @@
         }
       }
 
+      let prevPhase = '';
+      let soundEnabled = true;
+
+      // Check sound setting
+      async function checkSoundSetting() {
+        try {
+          const s = await invoke('get_settings');
+          soundEnabled = !!s.pomodoro_sound_enabled;
+        } catch(e) {}
+      }
+
+      function playTickSound(durationSecs) {
+        if (!soundEnabled) return;
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const gain = ctx.createGain();
+          gain.connect(ctx.destination);
+          const interval = setInterval(() => {
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.frequency.value = 800;
+            osc.type = 'sine';
+            g.gain.value = 0.15;
+            osc.connect(g);
+            g.connect(ctx.destination);
+            osc.start();
+            g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+            osc.stop(ctx.currentTime + 0.08);
+          }, 500);
+          setTimeout(() => clearInterval(interval), durationSecs * 1000);
+        } catch(e) {}
+      }
+
       async function syncPomodoro() {
         try {
           const st = await invoke('cmd_pomodoro_status');
@@ -202,9 +235,19 @@
             const m = Math.floor(st.remaining_secs / 60);
             const s = st.remaining_secs % 60;
             pd.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            // Play sound on phase change (5 sec tick)
+            if (st.phase !== prevPhase && prevPhase !== '' && prevPhase !== 'idle') {
+              playTickSound(5);
+            }
+            prevPhase = st.phase;
+            // Play sound in last 2 seconds (2 sec tick)
+            if (st.remaining_secs <= 2 && st.remaining_secs > 0) {
+              playTickSound(2);
+            }
           } else {
             tl.textContent = 'TODAY';
             pd.style.display = 'none';
+            prevPhase = '';
           }
         } catch (e) {}
       }
@@ -212,9 +255,11 @@
       // Initial status
       await syncFromApi();
       await syncPomodoro();
+      await checkSoundSetting();
       syncInterval = setInterval(() => {
         syncFromApi();
         syncPomodoro();
+        checkSoundSetting();
       }, 1000);
 
       // Listen for updates from backend

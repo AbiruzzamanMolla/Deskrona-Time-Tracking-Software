@@ -34,6 +34,12 @@ interface Settings {
   overlay_click_through?: boolean;
   overlay_position_x?: number;
   overlay_position_y?: number;
+  pomodoro_focus_minutes?: number;
+  pomodoro_short_break_minutes?: number;
+  pomodoro_long_break_minutes?: number;
+  pomodoro_sessions_before_long?: number;
+  pomodoro_auto_start?: boolean;
+  pomodoro_sound_enabled?: boolean;
 }
 
 interface Session {
@@ -2409,9 +2415,18 @@ const doChangeMode = async () => {
               <div class="card setting-card">
                 <label>{{ t("message.pomodoroAutoStart") || "Auto-start with tracking" }}</label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.pomodoro_auto_start" @change="saveSettings" />
+                  <input type="checkbox" v-model="settings.pomodoro_auto_start" />
                   <span :style="{ color: settings.pomodoro_auto_start ? 'var(--success)' : 'var(--text-muted)' }">
                     {{ settings.pomodoro_auto_start ? t("message.enabled") : t("message.disabled") }}
+                  </span>
+                </div>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t("message.pomodoroSound") || "Pomodoro Sound" }}</label>
+                <div class="status-toggle">
+                  <input type="checkbox" v-model="settings.pomodoro_sound_enabled" />
+                  <span :style="{ color: settings.pomodoro_sound_enabled ? 'var(--success)' : 'var(--text-muted)' }">
+                    {{ settings.pomodoro_sound_enabled ? t("message.enabled") : t("message.disabled") }}
                   </span>
                 </div>
               </div>
