@@ -884,7 +884,7 @@ const loadMoreActivity = () => {
 
 // ─── Watchers ────────────────────────────────────────────────────
 watch([currentView, filterType, customFromDate, customToDate], () => {
-  if (["trackings", "urls", "screenshots", "activity"].includes(currentView.value)) {
+  if (["trackings", "urls", "screenshots", "activity", "productivity"].includes(currentView.value)) {
     loadFilteredData(false);
   }
 });
@@ -1988,7 +1988,7 @@ const doChangeMode = async () => {
 
       <!-- PRODUCTIVITY VIEW -->
       <div v-if="currentView === 'productivity'" class="view-productivity">
-        <header>
+        <header class="view-header">
           <h1>{{ t("message.productivity") }}</h1>
           <div class="filter-controls">
             <button class="btn-browse" @click="loadFilteredData(false)">
@@ -2177,7 +2177,7 @@ const doChangeMode = async () => {
 
       <!-- SETTINGS VIEW -->
       <div v-if="currentView === 'settings'" class="view-settings">
-        <header>
+        <header class="view-header">
           <h1>{{ t("message.settings") }}</h1>
         </header>
         <div class="settings-content">
