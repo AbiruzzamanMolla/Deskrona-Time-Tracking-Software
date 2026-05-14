@@ -172,6 +172,9 @@ const overlayPosition = ref({ x: -1, y: 20 });
 const overlayElapsed = ref(0);
 let overlayInterval: any = null;
 
+// Settings tab
+const settingsTab = ref("general");
+
 // Pomodoro state
 const pomodoroPhase = ref("idle");
 const pomodoroRemaining = ref(0);
@@ -2185,28 +2188,29 @@ const doChangeMode = async () => {
       <div v-if="currentView === 'settings'" class="view-settings">
         <header class="view-header">
           <h1>{{ t("message.settings") }}</h1>
+          <div class="settings-tabs">
+            <button :class="['tab-btn', { active: settingsTab === 'general' }]" @click="settingsTab = 'general'">⚙️ {{ t("message.general") }}</button>
+            <button :class="['tab-btn', { active: settingsTab === 'monitoring' }]" @click="settingsTab = 'monitoring'">🔍 {{ t("message.monitoring") }}</button>
+            <button :class="['tab-btn', { active: settingsTab === 'storage' }]" @click="settingsTab = 'storage'">📁 {{ t("message.storage") }}</button>
+            <button :class="['tab-btn', { active: settingsTab === 'overlay' }]" @click="settingsTab = 'overlay'">🪟 {{ t("message.overlay") }}</button>
+            <button :class="['tab-btn', { active: settingsTab === 'pomodoro' }]" @click="settingsTab = 'pomodoro'">🍅 {{ t("message.pomodoro") }}</button>
+            <button :class="['tab-btn', { active: settingsTab === 'about' }]" @click="settingsTab = 'about'">ℹ️ About</button>
+          </div>
         </header>
+
         <div class="settings-content">
-          <!-- Update Check -->
+          <!-- Version + Update (shown on all tabs) -->
           <section class="settings-section">
             <div v-if="!updateCheckLoading" class="update-check-bar">
-              <span class="version-text">{{
-                t("message.currentVersion", { version: currentVersion })
-              }}</span>
-              <button class="btn-check-update" @click="checkForUpdates">
-                {{ t("message.checkUpdates") }}
-              </button>
+              <span class="version-text">{{ t("message.currentVersion", { version: currentVersion }) }}</span>
+              <button class="btn-check-update" @click="checkForUpdates">{{ t("message.checkUpdates") }}</button>
             </div>
-            <div v-if="updateCheckLoading" class="update-loading">
-              {{ t("message.checkingUpdates") }}
-            </div>
-            <div v-if="updateError" class="update-error">
-              {{ updateError }}
-            </div>
+            <div v-if="updateCheckLoading" class="update-loading">{{ t("message.checkingUpdates") }}</div>
+            <div v-if="updateError" class="update-error">{{ updateError }}</div>
           </section>
 
-          <!-- 1. General Settings -->
-          <section class="settings-section">
+          <!-- General Tab -->
+          <section v-if="settingsTab === 'general'" class="settings-section">
             <h2 class="section-title">⚙️ {{ t("message.general") }}</h2>
             <div class="settings-grid">
               <div class="card setting-card">
@@ -2228,170 +2232,112 @@ const doChangeMode = async () => {
                 <label>{{ t("message.autoStart") }}</label>
                 <div class="checkbox-row">
                   <input type="checkbox" v-model="settings.auto_start_on_boot" />
-                  <span>{{
-                    settings.auto_start_on_boot
-                      ? t("message.enabled")
-                      : t("message.disabled")
-                  }}</span>
+                  <span>{{ settings.auto_start_on_boot ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
             </div>
           </section>
 
-          <!-- 2. Monitoring & Tracking -->
-          <section class="settings-section">
-            <h2 class="section-title">
-              🔍 {{ t("message.monitoring") }}
-              <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="admin-lock-hint">🔒
-                {{
-                  t("message.controlledByAdmin") }}</span>
+          <!-- Monitoring Tab -->
+          <section v-if="settingsTab === 'monitoring'" class="settings-section">
+            <h2 class="section-title">🔍 {{ t("message.monitoring") }}
+              <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="admin-lock-hint">🔒 {{ t("message.controlledByAdmin") }}</span>
             </h2>
             <div class="settings-grid">
-              <div class="card setting-card" :class="{
-                'card-disabled':
-                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
-              }">
-                <label>
-                  {{ t("message.screenshotInterval") }}
-                  <span v-if="
-                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " class="lock-icon">🔒</span>
-                </label>
-                <input type="number" v-model="settings.screenshot_interval" min="1" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " />
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.screenshotInterval") }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
+                <input type="number" v-model="settings.screenshot_interval" min="1" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
               </div>
-              <div class="card setting-card" :class="{
-                'card-disabled':
-                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
-              }">
-                <label>
-                  {{ t("message.idleTimeout") }}
-                  <span v-if="
-                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " class="lock-icon">🔒</span>
-                </label>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.idleTimeout") }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <small class="setting-desc">{{ t("message.idleThresholdDesc") }}</small>
-                <input type="number" v-model="settings.idle_threshold" min="1" max="60" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " />
+                <input type="number" v-model="settings.idle_threshold" min="1" max="60" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
               </div>
-              <div class="card setting-card" :class="{
-                'card-disabled':
-                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
-              }">
-                <label>
-                  {{ t("message.screenshotStatus") }}
-                  <span v-if="
-                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " class="lock-icon">🔒</span>
-                </label>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.screenshotStatus") }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.is_screenshot_enabled" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                    " />
-                  <span :style="{
-                    color: settings.is_screenshot_enabled
-                      ? 'var(--success)'
-                      : 'var(--danger)',
-                  }">
-                    {{
-                      settings.is_screenshot_enabled
-                        ? t("message.active")
-                        : t("message.disabled")
-                    }}
-                  </span>
+                  <input type="checkbox" v-model="settings.is_screenshot_enabled" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+                  <span :style="{ color: settings.is_screenshot_enabled ? 'var(--success)' : 'var(--danger)' }">{{ settings.is_screenshot_enabled ? t("message.active") : t("message.disabled") }}</span>
                 </div>
               </div>
-              <div class="card setting-card" :class="{
-                'card-disabled':
-                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
-              }">
-                <label>
-                  Mouse Idle Monitor
-                  <span v-if="
-                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " class="lock-icon">🔒</span>
-                </label>
-                <small class="setting-desc">Use mouse activity for idle detection</small>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.idleMonitorMouse") || "Monitor Mouse" }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.idle_monitor_mouse" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                    " />
-                  <span :style="{
-                    color: settings.idle_monitor_mouse
-                      ? 'var(--success)'
-                      : 'var(--text-muted)',
-                  }">
-                    {{
-                      settings.idle_monitor_mouse
-                        ? t("message.enabled")
-                        : t("message.disabled")
-                    }}
-                  </span>
+                  <input type="checkbox" v-model="settings.idle_monitor_mouse" />
+                  <span>{{ settings.idle_monitor_mouse ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
-              <div class="card setting-card" :class="{
-                'card-disabled':
-                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
-              }">
-                <label>
-                  Keyboard Idle Monitor
-                  <span v-if="
-                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " class="lock-icon">🔒</span>
-                </label>
-                <small class="setting-desc">Use keyboard activity for idle detection</small>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.idleMonitorKeyboard") || "Monitor Keyboard" }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.idle_monitor_keyboard" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                    " />
-                  <span :style="{
-                    color: settings.idle_monitor_keyboard
-                      ? 'var(--success)'
-                      : 'var(--text-muted)',
-                  }">
-                    {{
-                      settings.idle_monitor_keyboard
-                        ? t("message.enabled")
-                        : t("message.disabled")
-                    }}
-                  </span>
+                  <input type="checkbox" v-model="settings.idle_monitor_keyboard" />
+                  <span>{{ settings.idle_monitor_keyboard ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
             </div>
           </section>
 
-          <!-- Overlay Settings -->
-          <section class="settings-section">
-            <h2 class="section-title">🪟 {{ t("message.overlay") || "Overlay" }}</h2>
+          <!-- Storage Tab -->
+          <section v-if="settingsTab === 'storage'" class="settings-section">
+            <h2 class="section-title">📁 {{ t("message.storage") }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.screenshotLocation") }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
+                <div class="input-with-button">
+                  <input type="text" v-model="settings.screenshot_location" :placeholder="defaultScreenshotDir" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+                  <button class="btn-browse" @click="selectScreenshotLocation" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'">📁</button>
+                </div>
+              </div>
+              <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
+                <label>{{ t("message.backupFrequency") }}</label>
+                <select v-model="settings.backup_frequency">
+                  <option value="never">{{ t("message.never") || "Never" }}</option>
+                  <option value="daily">{{ t("message.daily") || "Daily" }}</option>
+                  <option value="weekly">{{ t("message.weekly") || "Weekly" }}</option>
+                  <option value="monthly">{{ t("message.monthly") || "Monthly" }}</option>
+                </select>
+              </div>
+              <div class="card setting-card">
+                <label>{{ t("message.backupLocation") }}</label>
+                <div class="input-with-button">
+                  <input type="text" v-model="settings.backup_location" readonly @click="selectBackupLocation" />
+                  <button class="btn-browse" @click="selectBackupLocation">📁</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Overlay Tab -->
+          <section v-if="settingsTab === 'overlay'" class="settings-section">
+            <h2 class="section-title">🪟 {{ t("message.overlay") }}</h2>
             <div class="settings-grid">
               <div class="card setting-card">
-                <label>{{ t("message.enableOverlay") || "Enable Overlay" }}</label>
+                <label>{{ t("message.enableOverlay") }}</label>
                 <div class="status-toggle">
                   <input type="checkbox" v-model="overlayEnabled" @change="saveOverlaySettings" />
-                  <span :style="{ color: overlayEnabled ? 'var(--success)' : 'var(--danger)' }">
-                    {{ overlayEnabled ? t("message.enabled") : t("message.disabled") }}
-                  </span>
+                  <span :style="{ color: overlayEnabled ? 'var(--success)' : 'var(--danger)' }">{{ overlayEnabled ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card" :class="{ 'card-disabled': !overlayEnabled }">
-                <label>{{ t("message.alwaysOnTop") || "Always on Top" }}</label>
+                <label>{{ t("message.alwaysOnTop") }}</label>
                 <div class="status-toggle">
                   <input type="checkbox" v-model="overlayAlwaysOnTop" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
-                  <span :style="{ color: overlayAlwaysOnTop ? 'var(--success)' : 'var(--text-muted)' }">
-                    {{ overlayAlwaysOnTop ? t("message.enabled") : t("message.disabled") }}
-                  </span>
+                  <span :style="{ color: overlayAlwaysOnTop ? 'var(--success)' : 'var(--text-muted)' }">{{ overlayAlwaysOnTop ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card" :class="{ 'card-disabled': !overlayEnabled }">
-                <label>{{ t("message.clickThrough") || "Click Through" }}</label>
+                <label>{{ t("message.clickThrough") }}</label>
                 <div class="status-toggle">
                   <input type="checkbox" v-model="overlayClickThrough" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
-                  <small class="setting-desc">{{ t("message.clickThroughDesc") || "Mouse clicks pass through to apps below" }}</small>
+                  <small class="setting-desc">{{ t("message.clickThroughDesc") }}</small>
                 </div>
               </div>
             </div>
           </section>
 
-          <!-- Pomodoro Settings -->
-          <section class="settings-section">
-            <h2 class="section-title">🍅 {{ t("message.pomodoro") || "Pomodoro" }}</h2>
+          <!-- Pomodoro Tab -->
+          <section v-if="settingsTab === 'pomodoro'" class="settings-section">
+            <h2 class="section-title">🍅 {{ t("message.pomodoro") }}</h2>
             <div class="settings-grid">
               <div class="card setting-card">
                 <label>{{ t("message.pomodoroFocusDuration") || "Focus Duration" }}</label>
@@ -2416,128 +2362,58 @@ const doChangeMode = async () => {
                 <label>{{ t("message.pomodoroAutoStart") || "Auto-start with tracking" }}</label>
                 <div class="status-toggle">
                   <input type="checkbox" v-model="settings.pomodoro_auto_start" />
-                  <span :style="{ color: settings.pomodoro_auto_start ? 'var(--success)' : 'var(--text-muted)' }">
-                    {{ settings.pomodoro_auto_start ? t("message.enabled") : t("message.disabled") }}
-                  </span>
+                  <span :style="{ color: settings.pomodoro_auto_start ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.pomodoro_auto_start ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card">
                 <label>{{ t("message.pomodoroSound") || "Pomodoro Sound" }}</label>
                 <div class="status-toggle">
                   <input type="checkbox" v-model="settings.pomodoro_sound_enabled" />
-                  <span :style="{ color: settings.pomodoro_sound_enabled ? 'var(--success)' : 'var(--text-muted)' }">
-                    {{ settings.pomodoro_sound_enabled ? t("message.enabled") : t("message.disabled") }}
-                  </span>
+                  <span :style="{ color: settings.pomodoro_sound_enabled ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.pomodoro_sound_enabled ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
             </div>
           </section>
 
-          <!-- 3. Storage & Backup -->
-          <section class="settings-section">
-            <h2 class="section-title">📁 {{ t("message.storage") }}</h2>
-            <div class="settings-grid">
-              <div class="card setting-card" :class="{
-                'card-disabled':
-                  appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin',
-              }">
-                <label>
-                  {{ t("message.screenshotLocation") }}
-                  <span v-if="
-                    appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                  " class="lock-icon">🔒</span>
-                </label>
-                <div class="input-with-button">
-                  <input type="text" v-model="settings.screenshot_location" :placeholder="defaultScreenshotDir"
-                    :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                      " />
-                  <button class="btn-browse" @click="selectScreenshotLocation" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'
-                    ">
-                    📁
-                  </button>
+          <!-- About Tab -->
+          <section v-if="settingsTab === 'about'" class="settings-section">
+            <h2 class="section-title">ℹ️ About Deskrona</h2>
+            <div class="about-content" style="max-width: 600px;">
+              <p style="color: var(--text-muted); margin-bottom: 16px; line-height: 1.7;">
+                Deskrona is a local-first, privacy-focused time tracking and productivity monitoring application.
+                Built with <strong>Tauri</strong>, <strong>Rust</strong>, and <strong>Vue 3</strong>.
+                All data stays on your machine — no cloud, no telemetry.
+              </p>
+              <p style="color: var(--text-muted); margin-bottom: 16px;">
+                Version <strong>{{ currentVersion }}</strong> · MIT License
+              </p>
+              
+              <h3 style="margin: 20px 0 8px;">👨‍💻 Developer</h3>
+              <div class="card" style="padding: 16px;">
+                <div style="display: flex; align-items: center; gap: 16px;">
+                  <img src="https://avatars.githubusercontent.com/u/90689063?v=4" alt="Abiruzzaman" style="width: 48px; height: 48px; border-radius: 50%;" />
+                  <div>
+                    <strong>Abiruzzaman Molla</strong><br />
+                    <span style="font-size: 0.85rem; color: var(--text-muted);">Full-stack Developer</span>
+                  </div>
+                </div>
+                <div style="margin-top: 12px; display: flex; gap: 12px; flex-wrap: wrap;">
+                  <a class="btn btn-secondary" href="https://github.com/AbiruzzamanMolla" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">🐙 GitHub</a>
+                  <a class="btn btn-secondary" href="https://az.is-a.dev/" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">🌐 Website</a>
+                  <a class="btn btn-secondary" href="https://www.supportkori.com/abiruzzaman" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">❤️ Support</a>
                 </div>
               </div>
-              <div class="card setting-card">
-                <label>{{ t("message.backupFrequency") }}</label>
-                <select v-model="settings.backup_frequency">
-                  <option value="never">{{ t("message.never") }}</option>
-                  <option value="daily">{{ t("message.daily") }}</option>
-                  <option value="weekly">{{ t("message.weekly") }}</option>
-                </select>
-              </div>
-              <div class="card setting-card">
-                <label>{{ t("message.backupLocation") }}</label>
-                <div class="input-with-button">
-                  <input type="text" v-model="settings.backup_location"
-                    :placeholder="t('message.backupPathPlaceholder')" />
-                  <button class="btn-browse" @click="selectBackupLocation">📁</button>
-                </div>
+
+              <h3 style="margin: 20px 0 8px;">📦 Open Source Packages</h3>
+              <div class="card" style="padding: 16px; font-size: 0.85rem; color: var(--text-muted); line-height: 1.8;">
+                <div>Tauri 2 · Rust · Vue 3 · TypeScript · Vite</div>
+                <div>SQLite (rusqlite) · Chart.js · vue-chartjs · vue-i18n</div>
+                <div>device_query · active-win-pos-rs · screenshots-rs</div>
+                <div>argon2 · uuid · chrono · serde · zip</div>
               </div>
             </div>
           </section>
 
-          <!-- 4. Data Management -->
-          <section class="settings-section">
-            <h2 class="section-title">💾 {{ t("message.data") }}</h2>
-            <div class="settings-grid">
-              <div class="card setting-card">
-                <label>{{ t("message.exportData") }}</label>
-                <p class="setting-desc">{{ t("message.exportDesc") }}</p>
-                <button class="btn-action-outline" @click="exportData">
-                  📤 {{ t("message.exportData") }}
-                </button>
-              </div>
-              <div class="card setting-card">
-                <label>{{ t("message.importData") }}</label>
-                <p class="setting-desc">{{ t("message.importDesc") }}</p>
-                <button class="btn-action-outline" @click="importData">
-                  📥 {{ t("message.importData") }}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <!-- 5. System Mode -->
-          <section class="settings-section">
-            <h2 class="section-title">🚀 {{ t("message.systemModeHeader") }}</h2>
-            <div class="card setting-card-wide">
-              <div class="system-mode-container">
-                <div class="mode-info">
-                  <label>{{ t("message.appMode") }}</label>
-                  <p class="setting-desc">
-                    {{ t("message.currentMode") }}:
-                    <strong>{{
-                      appConfig?.mode === "multi_user"
-                        ? t("message.modeMultiUser")
-                        : t("message.modeSingleUser")
-                    }}</strong>
-                  </p>
-                </div>
-                <div class="mode-actions">
-                  <select v-model="pendingMode" class="mode-select">
-                    <option value="single_user">{{ t("message.modeSingleUser") }}</option>
-                    <option value="multi_user">{{ t("message.modeMultiUser") }}</option>
-                  </select>
-                  <button class="btn-change-mode" @click="doChangeMode" :disabled="pendingMode === appConfig?.mode">
-                    {{ t("message.changeMode") }}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <!-- 6. Danger Zone -->
-          <section class="settings-section">
-            <div class="card setting-card-wide danger-card">
-              <div class="danger-header">
-                <h2 class="danger-label">⚠️ {{ t("message.dangerZone") }}</h2>
-                <p class="danger-desc">{{ t("message.resetAppDesc") }}</p>
-              </div>
-              <button class="btn-danger" @click="doResetApp">
-                {{ t("message.resetApp") }}
-              </button>
-            </div>
-          </section>
         </div>
       </div>
 
@@ -4615,6 +4491,32 @@ input[type="date"] {
 }
 
 /* ─── Settings Reorganization ────────────────────────────────────── */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.tab-btn {
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.tab-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 .settings-content {
   display: flex;
   flex-direction: column;
