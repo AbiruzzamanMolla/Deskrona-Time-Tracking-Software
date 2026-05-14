@@ -2387,7 +2387,15 @@ const doChangeMode = async () => {
               <p style="color: var(--text-muted); margin-bottom: 16px;">
                 Version <strong>{{ currentVersion }}</strong> · MIT License
               </p>
-              
+
+              <h3 style="margin: 16px 0 8px;">🔧 Deskrona Tech Stack</h3>
+              <div class="card" style="padding: 14px; font-size: 0.85rem; color: var(--text-muted); line-height: 1.8;">
+                <div>Tauri 2 · Rust · Vue 3 · TypeScript · Vite</div>
+                <div>SQLite (rusqlite) · Chart.js · vue-chartjs · vue-i18n</div>
+                <div>device_query · active-win-pos-rs · screenshots-rs</div>
+                <div>argon2 · uuid · chrono · serde · zip</div>
+              </div>
+
               <h3 style="margin: 20px 0 8px;">👨‍💻 Developer</h3>
               <div class="card" style="padding: 16px;">
                 <div style="display: flex; align-items: center; gap: 16px;">
@@ -2404,12 +2412,102 @@ const doChangeMode = async () => {
                 </div>
               </div>
 
-              <h3 style="margin: 20px 0 8px;">📦 Open Source Packages</h3>
-              <div class="card" style="padding: 16px; font-size: 0.85rem; color: var(--text-muted); line-height: 1.8;">
-                <div>Tauri 2 · Rust · Vue 3 · TypeScript · Vite</div>
-                <div>SQLite (rusqlite) · Chart.js · vue-chartjs · vue-i18n</div>
-                <div>device_query · active-win-pos-rs · screenshots-rs</div>
-                <div>argon2 · uuid · chrono · serde · zip</div>
+              <h3 style="margin: 20px 0 8px;">👨‍💻 Developer</h3>
+              <div class="card" style="padding: 16px;">
+                <div style="display: flex; align-items: center; gap: 16px;">
+                  <img src="https://avatars.githubusercontent.com/u/90689063?v=4" alt="Abiruzzaman" style="width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--accent);" />
+                  <div>
+                    <strong style="font-size: 1.1rem;">Abiruzzaman Molla</strong><br />
+                    <span style="font-size: 0.85rem; color: var(--text-muted);">Full-stack Developer · Open Source Enthusiast</span>
+                  </div>
+                </div>
+                <div style="margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap;">
+                  <a class="btn btn-secondary" href="https://github.com/AbiruzzamanMolla" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">🐙 GitHub</a>
+                  <a class="btn btn-secondary" href="https://az.is-a.dev/" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">🌐 Website</a>
+                  <a class="btn btn-secondary" href="https://www.supportkori.com/abiruzzaman" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">❤️ Support</a>
+                </div>
+              </div>
+
+              <h3 style="margin: 20px 0 8px;">📦 Open Source Packages by Abiruzzaman</h3>
+
+              <h4 style="margin: 16px 0 6px; color: var(--text);">📦 Laravel Packages</h4>
+              <div class="settings-grid" style="grid-template-columns: 1fr 1fr;">
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/laravelcart" target="_blank">
+                  <strong>LaravelCart</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Flexible shopping cart for Laravel</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/blade-try-catch" target="_blank">
+                  <strong>Blade Try-Catch</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Error handling inside Blade templates</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/laravel-mail-logger" target="_blank">
+                  <strong>Laravel Mail Logger</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Log outgoing emails for debugging</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/maintenance-mode" target="_blank">
+                  <strong>Maintenance Mode</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Database-controlled maintenance toggle</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/transaction-middleware" target="_blank">
+                  <strong>Transaction Middleware</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Auto DB transactions for requests</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/spell-money-multilang" target="_blank">
+                  <strong>Spell Money Multilang</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Numbers to money words, multi-language</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/fraud-checker-bd-courier" target="_blank">
+                  <strong>Fraud Checker BD Courier</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Fraud detection for BD courier orders</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://packagist.org/packages/azmolla/fraud-checker-bd-courier-laravel" target="_blank">
+                  <strong>Fraud Checker BD Courier Laravel</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Laravel fraud detection for BD courier</small>
+                </a>
+              </div>
+
+              <h4 style="margin: 16px 0 6px; color: var(--text);">🧩 VS Code Extensions</h4>
+              <div class="settings-grid" style="grid-template-columns: 1fr 1fr;">
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://marketplace.visualstudio.com/items?itemName=azmolla.laragon-terminal-config" target="_blank">
+                  <strong>Laragon Terminal Config</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Configure VS Code terminal for Laragon</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://marketplace.visualstudio.com/items?itemName=azmolla.prayer-timer-bangladesh" target="_blank">
+                  <strong>Prayer Timer Bangladesh</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Real-time prayer times for Bangladesh</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://marketplace.visualstudio.com/items?itemName=azmolla.warp-terminal-launcher" target="_blank">
+                  <strong>Warp Terminal Launcher</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Launch Warp terminal from VS Code</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://marketplace.visualstudio.com/items?itemName=azmolla.laravel-log-watcher" target="_blank">
+                  <strong>Laravel Log Watcher</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Watch & notify on Laravel log changes</small>
+                </a>
+              </div>
+
+              <h4 style="margin: 16px 0 6px; color: var(--text);">📦 NPM Packages</h4>
+              <div class="settings-grid" style="grid-template-columns: 1fr 1fr;">
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://www.npmjs.com/package/git-diff-copy" target="_blank">
+                  <strong>Git Diff Copy</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Copy git diff to new directory</small>
+                </a>
+              </div>
+
+              <h4 style="margin: 16px 0 6px; color: var(--text);">🖥 Open Source Apps</h4>
+              <div class="settings-grid" style="grid-template-columns: 1fr 1fr;">
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://github.com/AbiruzzamanMolla/tdc-pos" target="_blank">
+                  <strong>TDC-POS</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Offline-first Point of Sale desktop app</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://github.com/AbiruzzamanMolla/DailyPrayerTimeSoftware" target="_blank">
+                  <strong>Daily Prayer Timer</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">Islamic prayer times with Adhan alerts</small>
+                </a>
+                <a class="card" style="padding: 12px; text-decoration: none; color: inherit;" href="https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software" target="_blank">
+                  <strong>Deskrona</strong>
+                  <small style="display: block; color: var(--text-muted); margin-top: 4px;">This app — time tracking & productivity</small>
+                </a>
               </div>
             </div>
           </section>
