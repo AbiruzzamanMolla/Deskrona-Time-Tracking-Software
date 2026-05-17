@@ -31,7 +31,13 @@ pub fn start_backup_scheduler(app: AppHandle) {
                     }
                     let date_str = Utc::now().format("%Y%m%d").to_string();
                     let backup_file = backup_dir.join(format!("time_guardian_backup_{}.db", date_str));
-                    let _ = fs::copy(&db_path, backup_file);
+                    let _ = fs::copy(&db_path, &backup_file);
+                    // Also backup api-config.json
+                    let api_config_path = crate::api_config::get_config_path(&app);
+                    if api_config_path.exists() {
+                        let api_backup_file = backup_dir.join(format!("api_config_{}.json", date_str));
+                        let _ = fs::copy(&api_config_path, api_backup_file);
+                    }
                 }
             }
         }
@@ -69,6 +75,14 @@ pub fn cmd_export_db(app_handle: tauri::AppHandle, path: String) -> Result<(), S
         }
     }
     
+    // Add api-config.json
+    let api_config_path = crate::api_config::get_config_path(&app_handle);
+    if api_config_path.exists() {
+        zip.start_file("api-config.json", options).map_err(|e| e.to_string())?;
+        let mut config_file = fs::File::open(&api_config_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut config_file, &mut zip).map_err(|e| e.to_string())?;
+    }
+    
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -102,6 +116,13 @@ pub fn cmd_import_db(app_handle: tauri::AppHandle, path: String) -> Result<(), S
                 fs::create_dir_all(&screenshot_dir).map_err(|e| e.to_string())?;
             }
             let mut out_file = fs::File::create(&dest_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut file, &mut out_file).map_err(|e| e.to_string())?;
+        } else if file.name() == "api-config.json" {
+            let api_config_path = crate::api_config::get_config_path(&app_handle);
+            if let Some(parent) = api_config_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut out_file = fs::File::create(&api_config_path).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut out_file).map_err(|e| e.to_string())?;
         }
     }

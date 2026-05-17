@@ -3,6 +3,7 @@ mod tracking;
 mod backup;
 mod config;
 mod auth;
+mod api_config;
 
 use tauri_plugin_autostart::ManagerExt;
 use serde::Serialize;
@@ -721,6 +722,8 @@ pub fn run() {
             cmd_pomodoro_skip,
             cmd_pomodoro_stop,
             cmd_pomodoro_status,
+            api_config::cmd_get_api_config,
+            api_config::cmd_save_api_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

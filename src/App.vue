@@ -12,6 +12,36 @@ import {
 import { useI18n } from "vue-i18n";
 import { Pie } from "vue-chartjs";
 import { Chart as ChartJS, Title, Tooltip, Legend, ArcElement } from "chart.js";
+import {
+  loadApiConfig,
+  saveApiConfig,
+  getApiConfig,
+  isOnline,
+  getQueueStats,
+  retryFailedJobs,
+  clearCompletedJobs,
+  clearAllJobs,
+} from "./utils/apiService";
+import { startSync, stopSync, restartSync, runSyncCycle } from "./utils/dataSync";
+import {
+  proxyLogin, proxyRegisterCompany, proxyValidateSession, proxyLogout,
+  proxyGetCompanyUsers, proxyCreateUser,
+  proxyGetAdminStats,
+  proxyGetUserScreenshots, proxyGetUserTimeLogs, proxyGetUserActivity, proxyGetUserUrls, proxyGetUserInputStats,
+  proxyGetDashboardData, proxyGetFilteredDashboardData,
+  proxyGetTimeLogsRange, proxyGetUrlsRange, proxyGetScreenshotsRange,
+  proxyGetAllAppCategories, proxyUpdateAppCategory,
+  proxyGetSettings, proxyUpdateSettings,
+  proxyPomodoroStart, proxyPomodoroSkip, proxyPomodoroStop, proxyPomodoroStatus,
+  proxySetAutostart,
+  proxyExportDb, proxyImportDb,
+  proxyGetAppConfig, proxySaveAppConfig,
+  proxyResetApp,
+  proxyStartSession, proxyStopSession, proxyGetActiveSession,
+  proxySetTracking, proxyGetTracking,
+} from "./utils/apiProxy";
+import type { ApiConfigFile, ApiEndpointConfig, EndpointKey } from "./types/api";
+import { ENDPOINT_GROUPS } from "./types/api";
 
 ChartJS.register(Title, Tooltip, Legend, ArcElement);
 
@@ -146,6 +176,29 @@ const settings = ref<Settings>({
   idle_monitor_keyboard: true,
 });
 
+const apiConfig = ref<ApiConfigFile>({
+  mode: 'offline',
+  bearer_token: '',
+  endpoints: {} as Record<EndpointKey, ApiEndpointConfig>,
+});
+
+const queueStats = ref({ total: 0, pending: 0, failed: 0, jobs: [] });
+const lastSyncTime = ref('Never');
+const apiConfigTab = ref('general');
+
+const lastSyncTimeFormatted = computed(() => {
+  if (lastSyncTime.value === 'Never') return 'Never';
+  try {
+    const d = new Date(lastSyncTime.value);
+    return d.toLocaleTimeString();
+  } catch { return lastSyncTime.value; }
+});
+
+const triggerManualSync = async () => {
+  await runSyncCycle();
+  lastSyncTime.value = new Date().toISOString();
+};
+
 const currentView = ref("dashboard");
 const activeSession = ref<Session | null>(null);
 const dashboardData = ref<DashboardData>({
@@ -188,7 +241,7 @@ const pomodoroFormatted = computed(() => {
 
 const syncPomodoro = async () => {
   try {
-    const st = await invoke<any>("cmd_pomodoro_status");
+    const st = await proxyPomodoroStatus();
     pomodoroPhase.value = st.phase;
     pomodoroRemaining.value = st.remaining_secs;
     pomodoroCountToday.value = st.count_today;
@@ -196,17 +249,17 @@ const syncPomodoro = async () => {
 };
 
 const startPomodoro = async () => {
-  await invoke("cmd_pomodoro_start");
+  await proxyPomodoroStart();
   await syncPomodoro();
 };
 
 const skipPomodoro = async () => {
-  await invoke("cmd_pomodoro_skip");
+  await proxyPomodoroSkip();
   await syncPomodoro();
 };
 
 const stopPomodoro = async () => {
-  await invoke("cmd_pomodoro_stop");
+  await proxyPomodoroStop();
   await syncPomodoro();
 };
 
@@ -330,6 +383,12 @@ const wizardAdminPassword = ref("");
 const wizardConfirmPassword = ref("");
 const wizardError = ref("");
 const wizardLoading = ref(false);
+
+// Wizard API config
+const wizardApiMode = ref<'offline' | 'online'>('offline');
+const wizardApiServerUrl = ref('');
+const wizardApiBearerToken = ref('');
+const wizardApiQuickFilled = ref(false);
 
 // Login state
 const loginUsername = ref("");
@@ -461,7 +520,7 @@ const formatTime = (seconds: number): string => {
 
 const updateCategory = async (appName: string, category: string) => {
   try {
-    await invoke("cmd_update_app_category", { appName, category });
+    await proxyUpdateAppCategory(appName, category);
     const app = dashboardData.value.app_stats.find((a) => a.app_name === appName);
     if (app) app.category = category;
   } catch (error) {
@@ -557,18 +616,10 @@ const percentage = (seconds: number): number => {
 // ─── Settings ─────────────────────────────────────────────────────
 const loadSettings = async () => {
   try {
-    const s = await invoke<Settings>("get_settings");
+    const s = await proxyGetSettings() as Settings;
     settings.value = s;
     locale.value = s.language;
     applyTheme();
-    // Load overlay settings
-    overlayEnabled.value = (s as any).overlay_enabled || false;
-    overlayAlwaysOnTop.value = (s as any).overlay_always_on_top || false;
-    overlayClickThrough.value = (s as any).overlay_click_through || false;
-    overlayPosition.value = {
-      x: (s as any).overlay_position_x ?? -1,
-      y: (s as any).overlay_position_y ?? 20
-    };
   } catch (error) {
     console.error("Failed to load settings:", error);
   }
@@ -576,7 +627,7 @@ const loadSettings = async () => {
 
 const saveSettings = async () => {
   try {
-    await invoke("update_settings", { settings: settings.value });
+    await proxyUpdateSettings(settings.value);
     locale.value = settings.value.language;
     applyTheme();
   } catch (error) {
@@ -585,13 +636,86 @@ const saveSettings = async () => {
 };
 
 const saveOverlaySettings = async () => {
-  const s = await invoke<Settings>("get_settings");
+  const s = await proxyGetSettings() as any;
   (s as any).overlay_enabled = !!overlayEnabled.value;
   (s as any).overlay_always_on_top = !!overlayAlwaysOnTop.value;
   (s as any).overlay_click_through = !!overlayClickThrough.value;
   (s as any).overlay_position_x = overlayPosition.value.x;
   (s as any).overlay_position_y = overlayPosition.value.y;
-  await invoke("update_settings", { settings: s });
+  await proxyUpdateSettings(s);
+};
+
+const loadApiConfigFromDisk = async () => {
+  try {
+    apiConfig.value = await loadApiConfig();
+    // If endpoints are empty, initialize with defaults
+    if (Object.keys(apiConfig.value.endpoints).length === 0) {
+      for (const group of ENDPOINT_GROUPS) {
+        for (const ep of group.endpoints) {
+          if (!apiConfig.value.endpoints[ep.key]) {
+            (apiConfig.value.endpoints as any)[ep.key] = {
+              enabled: false,
+              method: ep.method,
+              url: '',
+              headers: { 'Content-Type': 'application/json' },
+            };
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load API config:", e);
+  }
+};
+
+const saveApiConfigToDisk = async () => {
+  try {
+    await saveApiConfig(apiConfig.value);
+    restartSync();
+  } catch (e) {
+    console.error("Failed to save API config:", e);
+  }
+};
+
+const apiGroupExpanded = ref<Record<string, boolean>>({});
+for (const group of ENDPOINT_GROUPS) {
+  apiGroupExpanded.value[group.key] = false;
+}
+
+const toggleApiGroup = (key: string) => {
+  apiGroupExpanded.value[key] = !apiGroupExpanded.value[key];
+};
+
+const renameHeader = (key: EndpointKey, oldName: string, newName: string) => {
+  if (!newName) return;
+  const headers = apiConfig.value.endpoints[key]?.headers;
+  if (!headers) return;
+  const val = headers[oldName];
+  delete headers[oldName];
+  headers[newName] = val;
+  saveApiConfigToDisk();
+};
+
+const updateHeader = (key: EndpointKey, name: string, value: string) => {
+  const headers = apiConfig.value.endpoints[key]?.headers;
+  if (!headers) return;
+  headers[name] = value;
+  saveApiConfigToDisk();
+};
+
+const removeHeader = (key: EndpointKey, name: string) => {
+  const headers = apiConfig.value.endpoints[key]?.headers;
+  if (!headers) return;
+  delete headers[name];
+  saveApiConfigToDisk();
+};
+
+const addHeader = (key: EndpointKey) => {
+  const headers = apiConfig.value.endpoints[key]?.headers;
+  if (!headers) return;
+  headers[''] = '';
+  // Force reactivity
+  apiConfig.value = { ...apiConfig.value };
 };
 
 const applyTheme = () => {
@@ -632,7 +756,7 @@ const exportData = async () => {
   });
   if (selected && typeof selected === "string") {
     try {
-      await invoke("cmd_export_db", { path: selected });
+      await proxyExportDb(selected);
       alert(t("message.dataExportSuccess"));
     } catch (e) {
       console.error("Export failed:", e);
@@ -649,7 +773,7 @@ const importData = async () => {
   });
   if (selected && typeof selected === "string") {
     try {
-      await invoke("cmd_import_db", { path: selected });
+      await proxyImportDb(selected);
       alert(t("message.dataImportSuccess"));
     } catch (e) {
       console.error("Import failed:", e);
@@ -660,7 +784,7 @@ const importData = async () => {
 // ─── Session Management ──────────────────────────────────────────
 const startSession = async () => {
   try {
-    const session = await invoke<Session>("cmd_start_session");
+    const session = await proxyStartSession() as Session;
     activeSession.value = session;
   } catch (e) {
     console.error("Failed to start session:", e);
@@ -670,7 +794,7 @@ const startSession = async () => {
 const stopSession = async () => {
   if (!activeSession.value) return;
   try {
-    await invoke<Session>("cmd_stop_session", { sessionId: activeSession.value.id });
+    await proxyStopSession(activeSession.value.id) as Session;
     activeSession.value = null;
     await refreshDashboard();
   } catch (e) {
@@ -680,7 +804,7 @@ const stopSession = async () => {
 
 const loadActiveSession = async () => {
   try {
-    const session = await invoke<Session | null>("cmd_get_active_session");
+    const session = await proxyGetActiveSession() as Session | null;
     activeSession.value = session;
   } catch (e) {
     console.error("Failed to load active session:", e);
@@ -690,7 +814,7 @@ const loadActiveSession = async () => {
 // ─── Dashboard Data ──────────────────────────────────────────────
 const refreshDashboard = async () => {
   try {
-    const data = await invoke<DashboardData>("cmd_get_dashboard_data");
+    const data = await proxyGetDashboardData() as DashboardData;
     dashboardData.value = data;
     // Sync the local timer with backend data
     if (data.total_active_seconds !== undefined) {
@@ -739,7 +863,7 @@ const sendTrackingNativeNotification = async (status: string) => {
 // ─── Tracking Control ────────────────────────────────────────────
 const loadTrackingStatus = async () => {
   try {
-    trackingStatus.value = await invoke<string>("cmd_get_tracking");
+    trackingStatus.value = await proxyGetTracking();
   } catch (e) {
     console.error("Failed to get tracking status:", e);
   }
@@ -747,7 +871,7 @@ const loadTrackingStatus = async () => {
 
 const setTracking = async (status: string) => {
   try {
-    await invoke("cmd_set_tracking", { status });
+    await proxySetTracking(status);
     // Accumulate pause duration
     if (status === "paused") {
       pauseStartedAt = Date.now();
@@ -791,30 +915,15 @@ const loadFilteredData = async (append = false) => {
   try {
     if (currentView.value === "trackings") {
       if (!append) timeLogsOffset.value = 0;
-      const data = await invoke<TimeLogEntry[]>("cmd_get_time_logs_range", {
-        from,
-        to,
-        limit: pageSize,
-        offset: timeLogsOffset.value,
-      });
+      const data = await proxyGetTimeLogsRange(from, to, pageSize, timeLogsOffset.value) as TimeLogEntry[];
       timeLogsList.value = append ? [...timeLogsList.value, ...data] : data;
     } else if (currentView.value === "urls") {
       if (!append) urlsOffset.value = 0;
-      const data = await invoke<UrlEntryFull[]>("cmd_get_urls_range", {
-        from,
-        to,
-        limit: pageSize,
-        offset: urlsOffset.value,
-      });
+      const data = await proxyGetUrlsRange(from, to, pageSize, urlsOffset.value) as UrlEntryFull[];
       urlsList.value = append ? [...urlsList.value, ...data] : data;
     } else if (currentView.value === "screenshots") {
       if (!append) screenshotsOffset.value = 0;
-      const data = await invoke<ScreenshotEntry[]>("cmd_get_screenshots_range", {
-        from,
-        to,
-        limit: pageSize,
-        offset: screenshotsOffset.value,
-      });
+      const data = await proxyGetScreenshotsRange(from, to, pageSize, screenshotsOffset.value) as ScreenshotEntry[];
       screenshotsList.value = append ? [...screenshotsList.value, ...data] : data;
     } else if (currentView.value === "activity") {
       const { from, to } = getDateRange();
@@ -822,19 +931,13 @@ const loadFilteredData = async (append = false) => {
       if (!append) activityOffset.value = 0;
 
       const [acts, stats] = await Promise.all([
-        invoke<AdminActivity[]>("cmd_get_user_activity", {
-          userId,
-          from,
-          to,
-          limit: pageSize,
-          offset: activityOffset.value,
-        }),
-        invoke<InputStats>("cmd_get_user_input_stats", { userId, from, to }),
+        proxyGetUserActivity(userId, from, to, pageSize, activityOffset.value) as Promise<AdminActivity[]>,
+        proxyGetUserInputStats(userId, from, to) as Promise<InputStats>,
       ]);
       userActivityList.value = append ? [...userActivityList.value, ...acts] : acts;
       userInputStats.value = stats;
     } else if (currentView.value === "productivity") {
-      const data = await invoke<DashboardData>("cmd_get_filtered_dashboard_data", { from, to });
+      const data = await proxyGetFilteredDashboardData(from, to) as DashboardData;
       dashboardData.value = data;
     }
   } catch (e) {
@@ -904,7 +1007,7 @@ watch(
     saveSettings();
     if (oldVal && newVal.auto_start_on_boot !== oldVal.auto_start_on_boot) {
       try {
-        await invoke("set_autostart", { enabled: newVal.auto_start_on_boot });
+        await proxySetAutostart(newVal.auto_start_on_boot);
       } catch (error) {
         console.error("Failed to set autostart:", error);
       }
@@ -994,13 +1097,13 @@ onUnmounted(() => {
 // ─── Phase 8 Logic ────────────────────────────────────────────────
 
 const loadAppConfig = async () => {
-  const cfg = await invoke<AppConfig>("cmd_get_app_config");
+  const cfg = await proxyGetAppConfig() as AppConfig;
   appConfig.value = cfg;
   return cfg;
 };
 
 const saveAppConfig = async (cfg: AppConfig) => {
-  await invoke("cmd_save_app_config", { cfg });
+  await proxySaveAppConfig(cfg);
   appConfig.value = cfg;
 };
 
@@ -1008,7 +1111,7 @@ const tryRestoreSession = async () => {
   const token = localStorage.getItem("tg_session_token");
   if (!token) return false;
   try {
-    const user = await invoke<AuthUser>("cmd_validate_session", { token });
+    const user = await proxyValidateSession(token) as AuthUser;
     currentUser.value = user;
     sessionToken.value = token;
     return true;
@@ -1023,9 +1126,7 @@ async function doLogin() {
   loginError.value = "";
   loginLoading.value = true;
   try {
-    const result = await invoke<LoginResult>("cmd_login", {
-      payload: { username: loginUsername.value.trim(), password: loginPassword.value },
-    });
+    const result = await proxyLogin({ username: loginUsername.value.trim(), password: loginPassword.value }) as LoginResult;
     currentUser.value = result.user;
     sessionToken.value = result.token;
     localStorage.setItem("tg_session_token", result.token);
@@ -1040,7 +1141,7 @@ async function doLogin() {
 const doLogout = async () => {
   if (sessionToken.value) {
     try {
-      await invoke("cmd_logout", { token: sessionToken.value });
+      await proxyLogout(sessionToken.value);
     } catch { }
     localStorage.removeItem("tg_session_token");
   }
@@ -1075,26 +1176,92 @@ const wizardValidateStep2 = () => {
   wizardStep.value = 3;
 };
 
+const quickFillEndpoints = (serverUrl: string) => {
+  if (!serverUrl || wizardApiQuickFilled.value) return;
+  // Auto-fill common endpoint URLs based on server URL
+  const s = serverUrl.replace(/\/+$/, '');
+  const fill: Record<string, string> = {
+    auth_register: `${s}/api/auth/register`,
+    auth_login: `${s}/api/auth/login`,
+    auth_validate: `${s}/api/auth/validate`,
+    auth_logout: `${s}/api/auth/logout`,
+    session_start: `${s}/api/sessions/start`,
+    session_stop: `${s}/api/sessions/stop`,
+    session_active: `${s}/api/sessions/active`,
+    tracking_status: `${s}/api/tracking/status`,
+    time_logs_sync: `${s}/api/time-logs/sync`,
+    time_logs_get: `${s}/api/time-logs`,
+    screenshots_upload: `${s}/api/screenshots/upload`,
+    screenshots_get: `${s}/api/screenshots`,
+    urls_sync: `${s}/api/urls/sync`,
+    urls_get: `${s}/api/urls`,
+    activity_sync: `${s}/api/activity/sync`,
+    activity_get: `${s}/api/activity`,
+    input_stats_get: `${s}/api/input-stats`,
+    dashboard_today: `${s}/api/dashboard/today`,
+    dashboard_range: `${s}/api/dashboard/range`,
+    admin_users_list: `${s}/api/admin/users`,
+    admin_users_create: `${s}/api/admin/users`,
+    admin_stats: `${s}/api/admin/stats`,
+    admin_user_screenshots: `${s}/api/admin/users/{userId}/screenshots`,
+    admin_user_time_logs: `${s}/api/admin/users/{userId}/time-logs`,
+    admin_user_activity: `${s}/api/admin/users/{userId}/activity`,
+    admin_user_urls: `${s}/api/admin/users/{userId}/urls`,
+    admin_user_input_stats: `${s}/api/admin/users/{userId}/input-stats`,
+    app_categories_get: `${s}/api/categories`,
+    app_categories_update: `${s}/api/categories`,
+    config_get: `${s}/api/config`,
+    config_save: `${s}/api/config`,
+    settings_get: `${s}/api/settings`,
+    settings_update: `${s}/api/settings`,
+    backup_export: `${s}/api/backup/export`,
+    backup_import: `${s}/api/backup/import`,
+    update_check: `${s}/api/updates`,
+    pomodoro_start: `${s}/api/pomodoro/start`,
+    pomodoro_skip: `${s}/api/pomodoro/skip`,
+    pomodoro_stop: `${s}/api/pomodoro/stop`,
+    pomodoro_status: `${s}/api/pomodoro`,
+    autostart_set: `${s}/api/autostart`,
+    autostart_get: `${s}/api/autostart`,
+    reset_app: `${s}/api/reset`,
+  };
+  for (const [key, url] of Object.entries(fill)) {
+    if (apiConfig.value.endpoints[key as EndpointKey]) {
+      apiConfig.value.endpoints[key as EndpointKey].url = url;
+      apiConfig.value.endpoints[key as EndpointKey].enabled = true;
+    }
+  }
+  wizardApiQuickFilled.value = true;
+  saveApiConfigToDisk();
+};
+
 const wizardFinish = async () => {
   wizardError.value = "";
   wizardLoading.value = true;
   try {
     if (wizardMode.value === "multi_user") {
-      const result = await invoke<LoginResult>("cmd_register_company", {
-        payload: {
-          company_name: wizardCompanyName.value.trim(),
-          admin_username: wizardAdminUsername.value.trim(),
-          admin_display_name: wizardAdminDisplay.value.trim(),
-          admin_password: wizardAdminPassword.value,
-        },
-      });
+      const result = await proxyRegisterCompany({
+        company_name: wizardCompanyName.value.trim(),
+        admin_username: wizardAdminUsername.value.trim(),
+        admin_display_name: wizardAdminDisplay.value.trim(),
+        admin_password: wizardAdminPassword.value,
+      }) as LoginResult;
       currentUser.value = result.user;
       sessionToken.value = result.token;
       localStorage.setItem("tg_session_token", result.token);
     }
+
+    // Save API config set during wizard
+    apiConfig.value.mode = wizardApiMode.value;
+    apiConfig.value.bearer_token = wizardApiBearerToken.value;
+    if (wizardApiServerUrl.value && !wizardApiQuickFilled.value) {
+      quickFillEndpoints(wizardApiServerUrl.value);
+    }
+    await saveApiConfigToDisk();
+
     const cfg: AppConfig = { mode: wizardMode.value, setup_done: true };
     await saveAppConfig(cfg);
-    appScreen.value = wizardMode.value === "single_user" ? "app" : "app";
+    appScreen.value = "app";
   } catch (e: any) {
     wizardError.value = e?.toString() ?? "Setup failed";
   } finally {
@@ -1106,13 +1273,9 @@ const loadAdminData = async () => {
   if (!isAdmin.value || !currentUser.value) return;
   try {
     const [users, stats, categories] = await Promise.all([
-      invoke<AuthUser[]>("cmd_get_company_users", {
-        companyId: currentUser.value.company_id,
-      }),
-      invoke<UserProductivityStat[]>("cmd_get_admin_stats", {
-        companyId: currentUser.value.company_id,
-      }),
-      invoke<AppCategoryEntry[]>("cmd_get_all_app_categories"),
+      proxyGetCompanyUsers(currentUser.value.company_id) as Promise<AuthUser[]>,
+      proxyGetAdminStats(currentUser.value.company_id) as Promise<UserProductivityStat[]>,
+      proxyGetAllAppCategories() as Promise<AppCategoryEntry[]>,
     ]);
     adminUsers.value = users;
     adminStats.value = stats;
@@ -1135,49 +1298,25 @@ const loadUserDetail = async (
   try {
     if (tab === "screenshots") {
       if (!append) adminScreenshotsOffset.value = 0;
-      const data = await invoke<AdminScreenshot[]>("cmd_get_user_screenshots", {
-        userId: user.id,
-        from,
-        to,
-        limit: pageSize,
-        offset: adminScreenshotsOffset.value,
-      });
+      const data = await proxyGetUserScreenshots(user.id, from, to, pageSize, adminScreenshotsOffset.value) as AdminScreenshot[];
       adminUserScreenshots.value = append
         ? [...adminUserScreenshots.value, ...data]
         : data;
     } else if (tab === "timelogs") {
       if (!append) adminTimeLogsOffset.value = 0;
-      const data = await invoke<AdminTimeLog[]>("cmd_get_user_time_logs", {
-        userId: user.id,
-        from,
-        to,
-        limit: pageSize,
-        offset: adminTimeLogsOffset.value,
-      });
+      const data = await proxyGetUserTimeLogs(user.id, from, to, pageSize, adminTimeLogsOffset.value) as AdminTimeLog[];
       adminUserTimeLogs.value = append ? [...adminUserTimeLogs.value, ...data] : data;
     } else if (tab === "activity") {
       if (!append) adminActivityOffset.value = 0;
       const [acts, stats] = await Promise.all([
-        invoke<AdminActivity[]>("cmd_get_user_activity", {
-          userId: user.id,
-          from,
-          to,
-          limit: pageSize,
-          offset: adminActivityOffset.value,
-        }),
-        invoke<InputStats>("cmd_get_user_input_stats", { userId: user.id, from, to }),
+        proxyGetUserActivity(user.id, from, to, pageSize, adminActivityOffset.value) as Promise<AdminActivity[]>,
+        proxyGetUserInputStats(user.id, from, to) as Promise<InputStats>,
       ]);
       adminUserActivity.value = append ? [...adminUserActivity.value, ...acts] : acts;
       adminInputStats.value = stats;
     } else if (tab === "urls") {
       if (!append) adminUrlsOffset.value = 0;
-      const data = await invoke<UrlEntryFull[]>("cmd_get_user_urls", {
-        userId: user.id,
-        from,
-        to,
-        limit: pageSize,
-        offset: adminUrlsOffset.value,
-      });
+      const data = await proxyGetUserUrls(user.id, from, to, pageSize, adminUrlsOffset.value) as UrlEntryFull[];
       adminUserUrls.value = append ? [...adminUserUrls.value, ...data] : data;
     }
   } catch (e) {
@@ -1218,10 +1357,7 @@ const doCreateUser = async () => {
   createUserError.value = "";
   createUserLoading.value = true;
   try {
-    const created = await invoke<AuthUser>("cmd_create_user", {
-      companyId: currentUser.value?.company_id,
-      payload: newUser.value,
-    });
+    const created = await proxyCreateUser(currentUser.value?.company_id, newUser.value) as AuthUser;
     adminUsers.value.push(created);
     newUser.value = { username: "", display_name: "", password: "", role: "employee" };
     showCreateUser.value = false;
@@ -1236,11 +1372,40 @@ const doCreateUser = async () => {
 onMounted(async () => {
   // Apply stored theme BEFORE showing any screen (avoids flash)
   try {
-    const s = await invoke<Settings>("get_settings");
+    const s = await proxyGetSettings() as Settings;
     settings.value = s;
     locale.value = s.language;
     applyTheme();
   } catch { }
+
+  // Load API config
+  try {
+    await loadApiConfigFromDisk();
+  } catch { }
+
+  // Listen for queue updates
+  window.addEventListener('api-queue-update', (e: Event) => {
+    queueStats.value = (e as CustomEvent).detail;
+  });
+
+  // Sync queue stats periodically
+  setInterval(() => {
+    queueStats.value = getQueueStats() as any;
+  }, 5000);
+
+  // Track last sync time
+  setInterval(() => {
+    try {
+      const raw = localStorage.getItem('deskrona_sync_state');
+      if (raw) {
+        const state = JSON.parse(raw);
+        if (state.lastSyncTime) lastSyncTime.value = state.lastSyncTime;
+      }
+    } catch {}
+  }, 10000);
+
+  // Start sync if online mode
+  startSync();
 
   const cfg = await loadAppConfig();
   pendingMode.value = cfg.mode;
@@ -1282,7 +1447,7 @@ watch(currentView, (v) => {
 const doResetApp = async () => {
   if (!confirm(t("message.resetAppConfirm"))) return;
   try {
-    await invoke("cmd_reset_app");
+    await proxyResetApp();
     localStorage.removeItem("tg_session_token");
     currentUser.value = null;
     sessionToken.value = "";
@@ -1296,6 +1461,10 @@ const doResetApp = async () => {
     wizardConfirmPassword.value = "";
     wizardError.value = "";
     pendingMode.value = "single_user";
+    wizardApiMode.value = 'offline';
+    wizardApiServerUrl.value = '';
+    wizardApiBearerToken.value = '';
+    wizardApiQuickFilled.value = false;
     appScreen.value = "wizard";
   } catch (e: any) {
     alert(t("message.resetFailed") + ": " + (e?.toString() ?? t("message.unknownError")));
@@ -1385,8 +1554,46 @@ const doChangeMode = async () => {
         </div>
       </div>
 
-      <!-- Step 3: Confirm -->
+      <!-- Step 3: API Config -->
       <div v-if="wizardStep === 3" class="wizard-step">
+        <h2>{{ t("message.wizardApiConfig") }}</h2>
+        <div class="wizard-form">
+          <label>{{ t("message.wizardApiMode") }}</label>
+          <div class="mode-toggle-switch" style="margin-bottom: 12px;">
+            <button :class="['toggle-btn', { active: wizardApiMode === 'offline' }]" @click="wizardApiMode = 'offline'">
+              <span class="toggle-icon">📴</span> {{ t("message.wizardApiModeOffline") }}
+            </button>
+            <button :class="['toggle-btn', { active: wizardApiMode === 'online' }]" @click="wizardApiMode = 'online'">
+              <span class="toggle-icon">🌐</span> {{ t("message.wizardApiModeOnline") }}
+            </button>
+          </div>
+          <template v-if="wizardApiMode === 'online'">
+            <label>{{ t("message.wizardApiServerUrl") }}</label>
+            <input type="text" v-model="wizardApiServerUrl" :placeholder="t('message.wizardApiServerUrlPlaceholder')" @input="wizardApiQuickFilled = false" />
+            <label>{{ t("message.wizardApiBearerToken") }}</label>
+            <input type="password" v-model="wizardApiBearerToken" placeholder="eyJhbGci..." />
+            <button class="btn-wizard-back" style="margin-top: 4px; text-align: center;" @click="quickFillEndpoints(wizardApiServerUrl)" :disabled="!wizardApiServerUrl || wizardApiQuickFilled">
+              {{ t("message.wizardApiQuickFill") }}
+            </button>
+            <small style="display: block; margin-top: 6px; color: var(--text-muted); font-size: 0.8rem;">{{ t("message.wizardApiNote") }}</small>
+          </template>
+        </div>
+        <div v-if="wizardError" class="wizard-error">{{ wizardError }}</div>
+        <div class="wizard-actions">
+          <button class="btn-wizard-back" @click="
+            wizardStep = wizardMode === 'single_user' ? 1 : 2;
+          wizardError = '';
+          ">
+            {{ t("message.wizardBack") }}
+          </button>
+          <button class="btn-wizard-next" @click="wizardStep = 4">
+            {{ t("message.wizardContinue") }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 4: Confirm -->
+      <div v-if="wizardStep === 4" class="wizard-step">
         <h2>{{ t("message.wizardAllSet") }}</h2>
         <div class="confirm-summary">
           <div class="confirm-row">
@@ -1402,11 +1609,24 @@ const doChangeMode = async () => {
           <div v-if="wizardMode === 'multi_user'" class="confirm-row">
             <span>{{ t("message.wizardAdmin") }}</span><strong>{{ wizardAdminUsername }}</strong>
           </div>
+          <div class="confirm-row">
+            <span>{{ t("message.wizardApiInfo") }}</span><strong>{{
+              wizardApiMode === "online"
+                ? t("message.wizardApiModeOnline")
+                : t("message.wizardApiModeOffline")
+            }}</strong>
+          </div>
+          <div v-if="wizardApiMode === 'online' && wizardApiServerUrl" class="confirm-row">
+            <span>{{ t("message.wizardApiServerUrl") }}</span><strong>{{ wizardApiServerUrl }}</strong>
+          </div>
+          <div v-if="wizardApiMode === 'online' && wizardApiBearerToken" class="confirm-row">
+            <span>{{ t("message.wizardApiBearerToken") }}</span><strong>{{ t("message.wizardApiTokenSet") }}</strong>
+          </div>
         </div>
         <div v-if="wizardError" class="wizard-error">{{ wizardError }}</div>
         <div class="wizard-actions">
           <button class="btn-wizard-back" @click="
-            wizardStep = wizardMode === 'single_user' ? 1 : 2;
+            wizardStep = 3;
           wizardError = '';
           ">
             {{ t("message.wizardBack") }}
@@ -1416,6 +1636,27 @@ const doChangeMode = async () => {
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Login Screen -->
+  <div v-else-if="appScreen === 'login'" class="fullscreen-center login-bg">
+    <div class="login-card">
+      <div class="login-logo">
+        <img src="/favicon.png" width="52" height="52" />
+        <h1>{{ t("message.loginTitle") }}</h1>
+        <p>{{ t("message.loginSubtitle") }}</p>
+      </div>
+      <div class="login-form">
+        <label>{{ t("message.loginUsername") }}</label>
+        <input type="text" v-model="loginUsername" :placeholder="t('message.loginUsername')" @keyup.enter="doLogin" />
+        <label>{{ t("message.loginPassword") }}</label>
+        <input type="password" v-model="loginPassword" :placeholder="t('message.loginPassword')" @keyup.enter="doLogin" />
+      </div>
+      <div v-if="loginError" class="login-error">{{ loginError }}</div>
+      <button class="btn-login" :disabled="loginLoading" @click="doLogin">
+        {{ loginLoading ? t("message.loginSigningIn") : t("message.loginSignIn") }}
+      </button>
     </div>
   </div>
 
@@ -1513,6 +1754,15 @@ const doChangeMode = async () => {
 
       <div style="flex: 1"></div>
       <!-- spacer -->
+
+      <!-- API Queue Status -->
+      <div v-if="isOnline() && (queueStats.pending > 0 || queueStats.failed > 0)" class="api-queue-indicator">
+        <div class="queue-info">
+          <span class="queue-icon">📡</span>
+          <span v-if="queueStats.pending > 0" class="queue-pending">{{ queueStats.pending }} pending</span>
+          <span v-if="queueStats.failed > 0" class="queue-failed" @click="retryFailedJobs" title="Click to retry">⚠ {{ queueStats.failed }} failed</span>
+        </div>
+      </div>
 
       <!-- User badge + logout (multi-user only) -->
       <div v-if="isMultiUser && currentUser" class="user-badge">
@@ -2195,6 +2445,7 @@ const doChangeMode = async () => {
             <button :class="['tab-btn', { active: settingsTab === 'overlay' }]" @click="settingsTab = 'overlay'">🪟 {{ t("message.overlay") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'pomodoro' }]" @click="settingsTab = 'pomodoro'">🍅 {{ t("message.pomodoro") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'about' }]" @click="settingsTab = 'about'">ℹ️ About</button>
+            <button :class="['tab-btn', { active: settingsTab === 'api' }]" @click="settingsTab = 'api'">📡 API Config</button>
           </div>
         </header>
 
@@ -2234,6 +2485,31 @@ const doChangeMode = async () => {
                   <input type="checkbox" v-model="settings.auto_start_on_boot" />
                   <span>{{ settings.auto_start_on_boot ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
+              </div>
+              <!-- Mode Switch Card -->
+              <div class="card setting-card setting-card-wide">
+                <label>{{ t("message.systemMode") }}</label>
+                <div class="mode-toggle-row">
+                  <span :class="['mode-current-badge', isMultiUser ? 'mode-badge-multi' : 'mode-badge-single']">
+                    {{ isMultiUser ? t("message.modeMultiUser") : t("message.modeSingleUser") }}
+                  </span>
+                  <select v-model="pendingMode" class="mode-select">
+                    <option value="single_user">{{ t("message.modeSingleUser") }}</option>
+                    <option value="multi_user">{{ t("message.modeMultiUser") }}</option>
+                  </select>
+                  <button class="btn-change-mode" @click="doChangeMode" :disabled="pendingMode === appConfig.mode">
+                    {{ t("message.changeMode") }}
+                  </button>
+                </div>
+                <small class="setting-desc" style="margin-top: 8px;">{{ t("message.modeChangeWarning") }}</small>
+              </div>
+              <!-- Reset App Card -->
+              <div class="card danger-card setting-card-wide">
+                <div class="danger-header">
+                  <label class="danger-label">⚠️ {{ t("message.dangerZone") }}</label>
+                  <p class="danger-desc">{{ t("message.resetAppDesc") }}</p>
+                </div>
+                <button class="btn-danger" @click="doResetApp">{{ t("message.resetApp") }}</button>
               </div>
             </div>
           </section>
@@ -2508,6 +2784,103 @@ const doChangeMode = async () => {
                   <strong>Deskrona</strong>
                   <small style="display: block; color: var(--text-muted); margin-top: 4px;">This app — time tracking & productivity</small>
                 </a>
+              </div>
+            </div>
+          </section>
+
+          <!-- API Config Tab -->
+          <section v-if="settingsTab === 'api'" class="settings-section">
+            <h2 class="section-title">📡 API Configuration</h2>
+            <p style="color: var(--text-muted); margin-bottom: 16px; font-size: 0.85rem;">
+              Configure endpoints for online mode. All data stays local when mode is Offline.
+              Enable Online mode and fill in your server endpoint URLs to sync data remotely.
+            </p>
+
+            <div class="card setting-card" style="margin-bottom: 16px;">
+              <label>Mode</label>
+              <div class="mode-toggle-switch">
+                <button :class="['toggle-btn', { active: apiConfig.mode === 'offline' }]" @click="apiConfig.mode = 'offline'; saveApiConfigToDisk()">
+                  <span class="toggle-icon">📴</span> Offline
+                </button>
+                <button :class="['toggle-btn', { active: apiConfig.mode === 'online' }]" @click="apiConfig.mode = 'online'; saveApiConfigToDisk()">
+                  <span class="toggle-icon">🌐</span> Online
+                </button>
+              </div>
+              <small style="color: var(--text-muted); display: block; margin-top: 8px; line-height: 1.5;">
+                <strong>Offline:</strong> All data stored locally only. No network requests. App function fully without internet.<br>
+                <strong>Online:</strong> Sync data to your own server. Each endpoint URL and method is configurable below. Falls back to local storage if server unreachable.
+              </small>
+            </div>
+
+            <div class="card setting-card" style="margin-bottom: 16px;">
+              <label>Bearer Token</label>
+              <input type="password" v-model="apiConfig.bearer_token" @change="saveApiConfigToDisk" placeholder="JWT token for authenticated requests" style="width: 100%; font-family: monospace;" />
+              <small style="color: var(--text-muted);">Set manually if your server requires auth. Leave empty for open endpoints.</small>
+            </div>
+
+            <!-- Sync Controls -->
+            <div class="card" style="padding: 12px; margin-bottom: 16px; background: var(--bg-secondary);">
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <span style="font-weight: 600;">🔄 Sync</span>
+                <span v-if="apiConfig.mode === 'online'" style="color: var(--success); font-size: 0.85rem;">● Active</span>
+                <span v-else style="color: var(--text-muted); font-size: 0.85rem;">● Disabled</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">Last sync: {{ lastSyncTimeFormatted }}</span>
+                <button class="btn btn-secondary" @click="triggerManualSync" style="padding: 4px 12px; font-size: 0.8rem;" :disabled="apiConfig.mode === 'offline'">Sync Now</button>
+              </div>
+            </div>
+
+            <!-- Queue Controls -->
+            <div v-if="queueStats.total > 0" class="card" style="padding: 12px; margin-bottom: 16px; background: var(--bg-secondary);">
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <span style="font-weight: 600;">📡 Queue: {{ queueStats.total }} jobs</span>
+                <span v-if="queueStats.pending > 0" style="color: var(--warning);">{{ queueStats.pending }} pending</span>
+                <span v-if="queueStats.failed > 0" style="color: var(--danger);">{{ queueStats.failed }} failed</span>
+                <button v-if="queueStats.failed > 0" class="btn btn-secondary" @click="retryFailedJobs" style="padding: 4px 12px; font-size: 0.8rem;">Retry Failed</button>
+                <button class="btn btn-secondary" @click="clearCompletedJobs" style="padding: 4px 12px; font-size: 0.8rem;">Clear Completed</button>
+                <button class="btn btn-secondary" @click="clearAllJobs" style="padding: 4px 12px; font-size: 0.8rem;">Clear All</button>
+              </div>
+            </div>
+
+            <!-- Endpoint Groups -->
+            <div v-for="group in ENDPOINT_GROUPS" :key="group.key" class="card" style="margin-bottom: 12px; padding: 0; overflow: hidden;">
+              <div class="api-group-header" @click="toggleApiGroup(group.key)" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); user-select: none;">
+                <span style="font-weight: 600;">{{ group.label }}</span>
+                <span>{{ apiGroupExpanded[group.key] ? '▼' : '▶' }}</span>
+              </div>
+              <div v-if="apiGroupExpanded[group.key]" style="padding: 12px 16px;">
+                <div v-for="ep in group.endpoints" :key="ep.key" class="api-endpoint-row" style="margin-bottom: 12px; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
+                  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                    <input type="checkbox" v-model="apiConfig.endpoints[ep.key].enabled" @change="saveApiConfigToDisk" title="Enable/disable endpoint" />
+                    <code style="font-size: 0.8rem; background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;">{{ ep.key }}</code>
+                    <select v-model="apiConfig.endpoints[ep.key].method" @change="saveApiConfigToDisk" style="width: auto; padding: 2px 6px; font-size: 0.8rem;">
+                      <option value="GET">GET</option>
+                      <option value="POST">POST</option>
+                      <option value="PUT">PUT</option>
+                      <option value="DELETE">DELETE</option>
+                    </select>
+                  </div>
+                  <input type="text" v-model="apiConfig.endpoints[ep.key].url" @change="saveApiConfigToDisk" :placeholder="'https://your-server.com' + (ep.key.includes('{userId}') ? '/api/.../{userId}' : '/api/...')" style="width: 100%; font-family: monospace; font-size: 0.85rem; margin-bottom: 8px;" />
+                  
+                  <!-- Headers -->
+                  <div class="api-headers" style="margin-bottom: 6px;">
+                    <div v-for="(v, k) in apiConfig.endpoints[ep.key].headers" :key="k" style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">
+                      <input type="text" :value="k" @change="(e) => renameHeader(ep.key, k, (e.target as HTMLInputElement).value)" placeholder="Header name" style="flex: 1; font-size: 0.8rem; font-family: monospace;" />
+                      <input type="text" :value="v" @change="(e) => updateHeader(ep.key, k, (e.target as HTMLInputElement).value)" placeholder="Value" style="flex: 2; font-size: 0.8rem; font-family: monospace;" />
+                      <button @click="removeHeader(ep.key, k)" style="padding: 2px 6px; font-size: 0.8rem; background: none; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; cursor: pointer;">✕</button>
+                    </div>
+                    <button @click="addHeader(ep.key)" style="padding: 2px 8px; font-size: 0.75rem; background: var(--bg-secondary); border: 1px dashed var(--border-color); border-radius: 4px; cursor: pointer;">+ Add Header</button>
+                  </div>
+
+                  <!-- Info card: request/response spec -->
+                  <details style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
+                    <summary style="cursor: pointer; user-select: none;">📋 Request / Response spec</summary>
+                    <div style="margin-top: 6px; padding: 8px; background: var(--bg-secondary); border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-word;">
+                      <strong>➡ Request:</strong> {{ ep.requestBody }}
+                      <br />
+                      <strong>⬅ Response:</strong> {{ ep.responseBody }}
+                    </div>
+                  </details>
+                </div>
               </div>
             </div>
           </section>
@@ -5124,5 +5497,108 @@ select {
   border-radius: 8px;
   font-size: 0.85rem;
   gap: 12px;
+}
+
+/* ─── API Queue Indicator ─────────────────────────────────────────── */
+.api-queue-indicator {
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+.queue-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.queue-pending {
+  color: var(--warning);
+  font-weight: 600;
+}
+.queue-failed {
+  color: var(--danger);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ─── API Endpoint Rows ───────────────────────────────────────────── */
+.api-endpoint-row input[type="text"],
+.api-endpoint-row select {
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.api-endpoint-row input[type="text"]:focus,
+.api-endpoint-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.api-group-header:hover {
+  background: var(--card-bg) !important;
+}
+.api-headers input {
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+/* ─── Mode Toggle Switch ────────────────────────────────────────── */
+.mode-toggle-switch {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-color);
+  width: fit-content;
+}
+
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.toggle-btn:hover {
+  background: rgba(99, 102, 241, 0.05);
+  color: var(--text-color);
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.toggle-btn.active .toggle-icon {
+  filter: none;
+}
+
+.toggle-btn:first-child {
+  border-radius: 9px 0 0 9px;
+}
+
+.toggle-btn:last-child {
+  border-radius: 0 9px 9px 0;
+}
+
+.toggle-icon {
+  font-size: 1rem;
+  line-height: 1;
 }
 </style>
