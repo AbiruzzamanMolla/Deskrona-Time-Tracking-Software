@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.0 — Calendar View & Month Overview
+
+### 🆕 Calendar View
+- New Calendar view in sidebar with month grid visualization
+- Color-coded days based on total active time (green intensity scale)
+- Month navigation: prev, next, and "Today" quick jump
+- Day detail panel shows: total active time, app count, screenshot availability
+- Empty spacer cells for proper Mon-Sun grid alignment
+- Loading state handling for async data fetching
+
+### 🗄️ Backend
+- `get_calendar_month()` SQL: per-day rollup of total seconds, distinct app count, screenshot existence
+- `cmd_get_calendar_month` Tauri command registered in invoke handler
+- `CalendarDayEntry` struct for serialized day data
+
+### 🔗 API Layer
+- `calendar_month` endpoint key added to endpoint config type
+- `proxyGetCalendarMonth()` in apiProxy with online/fallback pattern
+- Quick-fill URL for `/api/calendar/month`
+- Endpoint documented in ENDPOINT_GROUPS spec
+
+### 🌐 i18n
+- 16 new English + Bengali keys: calendar, day names, detail labels, hints
+
 ## 0.0.9 — Online Mode & Configurable API Endpoints
 
 ### 🆕 Online Mode

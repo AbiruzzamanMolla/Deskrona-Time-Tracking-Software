@@ -31,6 +31,7 @@ import {
   proxyGetDashboardData, proxyGetFilteredDashboardData,
   proxyGetTimeLogsRange, proxyGetUrlsRange, proxyGetScreenshotsRange,
   proxyGetAllAppCategories, proxyUpdateAppCategory,
+  proxyGetCalendarMonth,
   proxyGetSettings, proxyUpdateSettings,
   proxyPomodoroStart, proxyPomodoroSkip, proxyPomodoroStop, proxyPomodoroStatus,
   proxySetAutostart,
@@ -481,6 +482,115 @@ const closeFullscreen = () => {
 // Accumulated paused seconds — updated each time we enter/leave pause state
 const pausedSeconds = ref(0);
 let pauseStartedAt: number | null = null;
+
+// ─── Calendar State ───────────────────────────────────────────
+interface CalendarDay {
+  date: string;
+  total_seconds: number;
+  app_count: number;
+  has_screenshots: boolean;
+}
+const calendarDays = ref<CalendarDay[]>([]);
+const calendarYear = ref(new Date().getFullYear());
+const calendarMonthNum = ref(new Date().getMonth()); // 0-based
+const calendarLoading = ref(false);
+
+const loadCalendarMonth = async () => {
+  calendarLoading.value = true;
+  const y = calendarYear.value;
+  const m = calendarMonthNum.value;
+  const from = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  const to = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  try {
+    calendarDays.value = await proxyGetCalendarMonth(from, to) as CalendarDay[];
+  } catch (e) {
+    console.error("Failed to load calendar:", e);
+    calendarDays.value = [];
+  } finally {
+    calendarLoading.value = false;
+  }
+};
+
+const calendarPrevMonth = () => {
+  if (calendarMonthNum.value === 0) {
+    calendarMonthNum.value = 11;
+    calendarYear.value--;
+  } else {
+    calendarMonthNum.value--;
+  }
+};
+
+const calendarNextMonth = () => {
+  if (calendarMonthNum.value === 11) {
+    calendarMonthNum.value = 0;
+    calendarYear.value++;
+  } else {
+    calendarMonthNum.value++;
+  }
+};
+
+const calendarGoToday = () => {
+  const now = new Date();
+  calendarYear.value = now.getFullYear();
+  calendarMonthNum.value = now.getMonth();
+};
+
+const selectedCalendarDay = ref<string | null>(null);
+
+watch([calendarYear, calendarMonthNum], () => {
+  if (currentView.value === 'calendar') loadCalendarMonth();
+});
+
+const calendarMonthName = computed(() => {
+  const d = new Date(calendarYear.value, calendarMonthNum.value, 1);
+  return d.toLocaleString('default', { month: 'long', year: 'numeric' });
+});
+
+const calendarDaysInMonth = computed(() => {
+  const y = calendarYear.value;
+  const m = calendarMonthNum.value;
+  const first = new Date(y, m, 1);
+  const last = new Date(y, m + 1, 0);
+  const daysInMonth = last.getDate();
+  const startDow = first.getDay(); // 0=Sun
+  const emptyStart = startDow === 0 ? 6 : startDow - 1; // Mon-first
+  const cells: ({ day: number; dateStr: string } | null)[] = [];
+  for (let i = 0; i < emptyStart; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    cells.push({ day: d, dateStr });
+  }
+  return cells;
+});
+
+const getCalendarDay = (dateStr: string): CalendarDay | undefined => {
+  return calendarDays.value.find(d => d.date === dateStr);
+};
+
+const calendarDayColor = (seconds: number): string => {
+  if (seconds <= 0) return 'var(--bg-color)';
+  if (seconds < 3600) return 'rgba(16, 185, 129, 0.25)';
+  if (seconds < 14400) return 'rgba(16, 185, 129, 0.45)';
+  if (seconds < 28800) return 'rgba(16, 185, 129, 0.65)';
+  return 'rgba(16, 185, 129, 0.85)';
+};
+
+const calendarDayTextColor = (seconds: number): string => {
+  if (seconds >= 28800) return '#fff';
+  return 'var(--text-color)';
+};
+
+const viewDayDetail = (dateStr: string) => {
+  selectedCalendarDay.value = dateStr;
+};
+
+const selectedCalendarDayData = computed(() => {
+  if (!selectedCalendarDay.value) return null;
+  return getCalendarDay(selectedCalendarDay.value);
+});
+
+const todayStr = computed(() => new Date().toISOString().split('T')[0]);
 
 const filterType = ref("daily");
 const customFromDate = ref(new Date().toISOString().split("T")[0]);
@@ -1223,6 +1333,7 @@ const quickFillEndpoints = (serverUrl: string) => {
     pomodoro_status: `${s}/api/pomodoro`,
     autostart_set: `${s}/api/autostart`,
     autostart_get: `${s}/api/autostart`,
+    calendar_month: `${s}/api/calendar/month`,
     reset_app: `${s}/api/reset`,
   };
   for (const [key, url] of Object.entries(fill)) {
@@ -1440,6 +1551,7 @@ watch(appScreen, (s) => {
 
 watch(currentView, (v) => {
   if (v === "admin") loadAdminData();
+  else if (v === "calendar") loadCalendarMonth();
   else if (["trackings", "urls", "screenshots", "activity"].includes(v))
     loadFilteredData();
 });
@@ -1687,6 +1799,9 @@ const doChangeMode = async () => {
         </button>
         <button :class="{ active: currentView === 'productivity' }" @click="currentView = 'productivity'">
           ⭐ {{ t("message.productivity") }}
+        </button>
+        <button :class="{ active: currentView === 'calendar' }" @click="currentView = 'calendar'">
+          📅 {{ t("message.calendar") }}
         </button>
         <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
           ⚙️ {{ t("message.settings") }}
@@ -2241,6 +2356,93 @@ const doChangeMode = async () => {
             <button class="btn-start" @click="loadMoreScreenshots">
               {{ t("message.loadMore") }}
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CALENDAR VIEW -->
+      <div v-if="currentView === 'calendar'" class="view-calendar">
+        <header class="view-header">
+          <h1>📅 {{ t("message.calendar") }}</h1>
+          <div class="filter-controls">
+            <button class="btn-browse" @click="calendarGoToday">
+              🎯 {{ t("message.calendarToday") }}
+            </button>
+            <button class="btn-browse" @click="calendarPrevMonth">◀</button>
+            <strong style="min-width: 180px; text-align: center;">{{ calendarMonthName }}</strong>
+            <button class="btn-browse" @click="calendarNextMonth">▶</button>
+            <button class="btn-browse" @click="loadCalendarMonth">
+              🔄 {{ t("message.refresh") }}
+            </button>
+          </div>
+        </header>
+
+        <div class="calendar-layout">
+          <!-- Calendar Grid -->
+          <div class="card calendar-card">
+            <div v-if="calendarLoading" class="empty-state" style="border: none;">
+              <p>{{ t("message.loading") }}</p>
+            </div>
+            <template v-else>
+              <div class="calendar-weekdays">
+                <span>{{ t("message.calendarMon") }}</span>
+                <span>{{ t("message.calendarTue") }}</span>
+                <span>{{ t("message.calendarWed") }}</span>
+                <span>{{ t("message.calendarThu") }}</span>
+                <span>{{ t("message.calendarFri") }}</span>
+                <span>{{ t("message.calendarSat") }}</span>
+                <span>{{ t("message.calendarSun") }}</span>
+              </div>
+              <div class="calendar-grid">
+                <div v-for="(cell, idx) in calendarDaysInMonth" :key="idx"
+                  :class="[
+                    'calendar-cell',
+                    { 'calendar-cell-empty': !cell },
+                    { 'calendar-cell-today': cell && cell.dateStr === todayStr },
+                    { 'calendar-cell-selected': cell && cell.dateStr === selectedCalendarDay },
+                  ]"
+                  :style="cell ? {
+                    background: getCalendarDay(cell.dateStr) ? calendarDayColor(getCalendarDay(cell.dateStr)!.total_seconds) : 'var(--bg-color)',
+                    color: getCalendarDay(cell.dateStr) ? calendarDayTextColor(getCalendarDay(cell.dateStr)!.total_seconds) : 'var(--text-muted)',
+                  } : {}"
+                  @click="cell && viewDayDetail(cell.dateStr)">
+                  <template v-if="cell">
+                    <span class="calendar-day-num">{{ cell.day }}</span>
+                    <span v-if="getCalendarDay(cell.dateStr)" class="calendar-day-bar">
+                      {{ formatTime(getCalendarDay(cell.dateStr)!.total_seconds) }}
+                    </span>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Day Detail Sidebar -->
+          <div v-if="selectedCalendarDay" class="card calendar-detail-card">
+            <h3>{{ selectedCalendarDay }}</h3>
+            <div v-if="selectedCalendarDayData" class="calendar-detail-stats">
+              <div class="detail-stat">
+                <span class="detail-stat-label">{{ t("message.calendarTotal") }}</span>
+                <span class="detail-stat-value">{{ formatTime(selectedCalendarDayData.total_seconds) }}</span>
+              </div>
+              <div class="detail-stat">
+                <span class="detail-stat-label">{{ t("message.calendarApps") }}</span>
+                <span class="detail-stat-value">{{ selectedCalendarDayData.app_count }}</span>
+              </div>
+              <div class="detail-stat">
+                <span class="detail-stat-label">{{ t("message.calendarScreenshots") }}</span>
+                <span class="detail-stat-value">
+                  <span v-if="selectedCalendarDayData.has_screenshots" style="color: var(--success)">✅ {{ t("message.enabled") }}</span>
+                  <span v-else style="color: var(--text-muted)">—</span>
+                </span>
+              </div>
+            </div>
+            <div v-else class="empty-state" style="border: none; padding: 20px;">
+              <p>{{ t("message.calendarNoData") }}</p>
+            </div>
+          </div>
+          <div v-else class="card calendar-detail-card calendar-detail-empty">
+            <p>{{ t("message.calendarClickDay") }}</p>
           </div>
         </div>
       </div>
@@ -5600,5 +5802,155 @@ select {
 .toggle-icon {
   font-size: 1rem;
   line-height: 1;
+}
+
+/* ─── Calendar View ──────────────────────────────────────────── */
+.view-calendar {
+  max-width: 1000px;
+}
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 20px;
+  align-items: start;
+}
+
+.calendar-card {
+  padding: 20px;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-height: 64px;
+  border: 2px solid transparent;
+  position: relative;
+}
+
+.calendar-cell:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: var(--accent);
+}
+
+.calendar-cell-today {
+  border-color: var(--accent) !important;
+  font-weight: 700;
+}
+
+.calendar-cell-selected {
+  border-color: var(--warning) !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+}
+
+.calendar-day-num {
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.calendar-day-bar {
+  font-size: 0.6rem;
+  line-height: 1;
+  opacity: 0.8;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-detail-card {
+  padding: 20px;
+  position: sticky;
+  top: 20px;
+}
+
+.calendar-detail-card h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.calendar-detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.calendar-detail-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-stat:last-child {
+  border-bottom: none;
+}
+
+.detail-stat-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.detail-stat-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+@media (max-width: 900px) {
+  .calendar-layout {
+    grid-template-columns: 1fr;
+  }
+  .calendar-detail-card {
+    position: static;
+  }
+  .calendar-cell {
+    min-height: 48px;
+    padding: 4px 2px;
+  }
+  .calendar-day-num {
+    font-size: 0.8rem;
+  }
+  .calendar-day-bar {
+    font-size: 0.5rem;
+  }
 }
 </style>

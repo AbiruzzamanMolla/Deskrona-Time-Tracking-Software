@@ -199,6 +199,11 @@ fn cmd_get_filtered_dashboard_data(app_handle: tauri::AppHandle, from: String, t
 }
 
 #[tauri::command]
+fn cmd_get_calendar_month(app_handle: tauri::AppHandle, from: String, to: String) -> Result<Vec<db::CalendarDayEntry>, String> {
+    db::get_calendar_month(&app_handle, &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn cmd_set_tracking(app_handle: tauri::AppHandle, status: String) -> Result<(), String> {
     tracking::set_tracking_status(&status);
     let _ = app_handle.emit("tracking-status-changed", &status);
@@ -695,6 +700,7 @@ pub fn run() {
             cmd_get_time_logs_range,
             cmd_get_urls_range,
             cmd_get_screenshots_range,
+            cmd_get_calendar_month,
             cmd_get_screenshot_dir,
             cmd_update_app_category,
             backup::cmd_export_db,

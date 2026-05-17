@@ -914,6 +914,42 @@ pub fn get_user_input_stats(app: &AppHandle, user_id: &str, from: &str, to: &str
     Ok(UserInputStats { keyboard_count, mouse_count, idle_start_count })
 }
 
+// ─── Calendar: Per-Day Summary ────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CalendarDayEntry {
+    pub date: String,
+    pub total_seconds: i64,
+    pub app_count: i64,
+    pub has_screenshots: bool,
+}
+
+pub fn get_calendar_month(app: &AppHandle, from: &str, to: &str) -> Result<Vec<CalendarDayEntry>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+
+    let mut stmt = conn.prepare(
+        "SELECT date(t.start_time) as day,
+                COALESCE(SUM(t.duration), 0) as total_secs,
+                COUNT(DISTINCT t.app_name) as apps,
+                CASE WHEN EXISTS (SELECT 1 FROM screenshots s WHERE s.user_id = t.user_id AND date(s.captured_at) = day) THEN 1 ELSE 0 END as has_ss
+         FROM time_logs t
+         WHERE t.user_id = ?1 AND date(t.start_time) >= ?2 AND date(t.start_time) <= ?3
+         GROUP BY day
+         ORDER BY day ASC"
+    )?;
+    let rows = stmt.query_map(params![user_id, from, to], |row| {
+        Ok(CalendarDayEntry {
+            date: row.get(0)?,
+            total_seconds: row.get(1)?,
+            app_count: row.get(2)?,
+            has_screenshots: row.get::<_, i32>(3)? != 0,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
 pub fn update_app_category(app: &AppHandle, app_name: &str, category: &str) -> Result<()> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;

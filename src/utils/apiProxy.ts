@@ -243,6 +243,18 @@ export async function proxyUpdateAppCategory(appName: string, category: string):
   await invoke('cmd_update_app_category', { appName, category });
 }
 
+// ─── Calendar ───────────────────────────────────────────────────
+
+export async function proxyGetCalendarMonth(from: string, to: string): Promise<any[]> {
+  if (isOnline()) {
+    try {
+      const result = await apiFetch<{ days: any[] }>('calendar_month', undefined, undefined, { from, to });
+      if (result?.days) return result.days;
+    } catch {}
+  }
+  return invoke('cmd_get_calendar_month', { from, to });
+}
+
 // ─── Settings ────────────────────────────────────────────────────
 
 export async function proxyGetSettings(): Promise<any> {

@@ -26,6 +26,7 @@ export type EndpointKey =
   | 'update_check'
   | 'pomodoro_start' | 'pomodoro_skip' | 'pomodoro_stop' | 'pomodoro_status'
   | 'autostart_set' | 'autostart_get'
+  | 'calendar_month'
   | 'reset_app';
 
 export interface ApiConfigFile {
@@ -190,6 +191,11 @@ export const ENDPOINT_GROUPS: { label: string; key: string; endpoints: ApiEndpoi
         key: 'dashboard_range', label: 'Get Dashboard by Range', group: 'Dashboard', method: 'GET',
         requestBody: 'Query params:\n  ?start=string (ISO date)\n  &end=string (ISO date)',
         responseBody: '{\n  "days": [{\n    "date": string (ISO date),\n    "total_time": number,\n    "apps": [{\n      "app_name": string,\n      "total_seconds": number\n    }]\n  }]\n}',
+      },
+      {
+        key: 'calendar_month', label: 'Get Calendar Month', group: 'Dashboard', method: 'GET',
+        requestBody: 'Query params:\n  ?from=string (ISO date, first day of month)\n  &to=string (ISO date, last day of month)',
+        responseBody: '{\n  "days": [{\n    "date": string (ISO date),\n    "total_seconds": number,\n    "app_count": number,\n    "has_screenshots": boolean\n  }]\n}',
       },
     ],
   },
