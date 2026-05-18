@@ -1,0 +1,13 @@
+# Deskrona
+
+> Local-first time tracking & productivity software for Windows. Privacy-focused — all data stays on your machine.
+
+Deskrona tracks active apps, window titles, browser URLs, screenshots, keyboard and mouse activity, with a built-in Pomodoro timer and rich reports. Built with Tauri and Rust. Optional multi-user mode for teams.
+
+## Pages
+
+- [Home](/): Overview, features, downloads, and FAQ.
+
+## Optional
+
+- [GitHub repository](https://github.com/AbiruzzamanMolla/Deskrona-Time-Tracking-Software): Source code and releases.
