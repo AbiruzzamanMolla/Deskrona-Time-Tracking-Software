@@ -580,11 +580,6 @@ const calendarDayTextColor = (seconds: number): string => {
   if (seconds >= 28800) return '#fff';
   return 'var(--text-color)';
 };
-
-const viewDayDetail = (dateStr: string) => {
-  selectedCalendarDay.value = dateStr;
-};
-
 const selectedCalendarDayData = computed(() => {
   if (!selectedCalendarDay.value) return null;
   return getCalendarDay(selectedCalendarDay.value);
@@ -592,6 +587,31 @@ const selectedCalendarDayData = computed(() => {
 
 const todayStr = computed(() => new Date().toISOString().split('T')[0]);
 
+// ─── Calendar Day Detail ──────────────────────────────────────
+const calendarDayApps = ref<AppUsageStat[]>([]);
+const calendarDayLoadingDetail = ref(false);
+const calendarDayInputStats = ref({ keyboard_count: 0, mouse_count: 0 });
+
+const loadDayDetail = async (dateStr: string) => {
+  calendarDayLoadingDetail.value = true;
+  try {
+    const [data, inputStats] = await Promise.all([
+      proxyGetFilteredDashboardData(dateStr, dateStr) as Promise<DashboardData>,
+      proxyGetUserInputStats('default_user' as any, dateStr, dateStr),
+    ]);
+    calendarDayApps.value = data.app_stats || [];
+    calendarDayInputStats.value = inputStats as any;
+  } catch {
+    calendarDayApps.value = [];
+  } finally {
+    calendarDayLoadingDetail.value = false;
+  }
+};
+
+const viewDayDetail = (dateStr: string) => {
+  selectedCalendarDay.value = dateStr;
+  loadDayDetail(dateStr);
+};
 const filterType = ref("daily");
 const customFromDate = ref(new Date().toISOString().split("T")[0]);
 const customToDate = ref(new Date().toISOString().split("T")[0]);
@@ -2420,26 +2440,51 @@ const doChangeMode = async () => {
           <!-- Day Detail Sidebar -->
           <div v-if="selectedCalendarDay" class="card calendar-detail-card">
             <h3>{{ selectedCalendarDay }}</h3>
-            <div v-if="selectedCalendarDayData" class="calendar-detail-stats">
-              <div class="detail-stat">
-                <span class="detail-stat-label">{{ t("message.calendarTotal") }}</span>
-                <span class="detail-stat-value">{{ formatTime(selectedCalendarDayData.total_seconds) }}</span>
-              </div>
-              <div class="detail-stat">
-                <span class="detail-stat-label">{{ t("message.calendarApps") }}</span>
-                <span class="detail-stat-value">{{ selectedCalendarDayData.app_count }}</span>
-              </div>
-              <div class="detail-stat">
-                <span class="detail-stat-label">{{ t("message.calendarScreenshots") }}</span>
-                <span class="detail-stat-value">
-                  <span v-if="selectedCalendarDayData.has_screenshots" style="color: var(--success)">✅ {{ t("message.enabled") }}</span>
-                  <span v-else style="color: var(--text-muted)">—</span>
-                </span>
-              </div>
+            <div v-if="calendarDayLoadingDetail" class="empty-state" style="border: none; padding: 20px;">
+              <p>{{ t("message.loading") }}</p>
             </div>
-            <div v-else class="empty-state" style="border: none; padding: 20px;">
-              <p>{{ t("message.calendarNoData") }}</p>
-            </div>
+            <template v-else>
+              <div v-if="selectedCalendarDayData" class="calendar-detail-stats">
+                <div class="detail-stat">
+                  <span class="detail-stat-label">{{ t("message.calendarTotal") }}</span>
+                  <span class="detail-stat-value">{{ formatTime(selectedCalendarDayData.total_seconds) }}</span>
+                </div>
+                <div class="detail-stat">
+                  <span class="detail-stat-label">{{ t("message.calendarApps") }}</span>
+                  <span class="detail-stat-value">{{ selectedCalendarDayData.app_count }}</span>
+                </div>
+                <div class="detail-stat">
+                  <span class="detail-stat-label">{{ t("message.calendarScreenshots") }}</span>
+                  <span class="detail-stat-value">
+                    <span v-if="selectedCalendarDayData.has_screenshots" style="color: var(--success)">✅ {{ t("message.enabled") }}</span>
+                    <span v-else style="color: var(--text-muted)">—</span>
+                  </span>
+                </div>
+                <div class="detail-stat">
+                  <span class="detail-stat-label">⌨️ {{ t("message.keyboard") }}</span>
+                  <span class="detail-stat-value">{{ calendarDayInputStats.keyboard_count.toLocaleString() }}</span>
+                </div>
+                <div class="detail-stat">
+                  <span class="detail-stat-label">🖱 {{ t("message.mouse") }}</span>
+                  <span class="detail-stat-value">{{ calendarDayInputStats.mouse_count.toLocaleString() }}</span>
+                </div>
+              </div>
+              <div v-else class="empty-state" style="border: none; padding: 20px;">
+                <p>{{ t("message.calendarNoData") }}</p>
+              </div>
+
+              <!-- Top Apps for the day -->
+              <div v-if="calendarDayApps.length > 0" class="calendar-day-apps">
+                <h4 style="margin: 16px 0 8px; font-size: 0.85rem; color: var(--text-muted);">{{ t("message.topApps") }}</h4>
+                <div v-for="app in calendarDayApps.slice(0, 10)" :key="app.app_name" class="detail-app-row">
+                  <span class="app-name" style="font-size: 0.82rem;">
+                    <span class="app-icon">{{ appIcon(app.app_name) }}</span>
+                    {{ app.app_name }}
+                  </span>
+                  <span class="detail-app-time">{{ formatTime(app.total_seconds) }}</span>
+                </div>
+              </div>
+            </template>
           </div>
           <div v-else class="card calendar-detail-card calendar-detail-empty">
             <p>{{ t("message.calendarClickDay") }}</p>
@@ -5933,6 +5978,31 @@ select {
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--text-color);
+}
+
+.calendar-day-apps {
+  border-top: 1px solid var(--border-color);
+  margin-top: 12px;
+  padding-top: 4px;
+}
+
+.detail-app-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-app-row:last-child {
+  border-bottom: none;
+}
+
+.detail-app-time {
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 900px) {

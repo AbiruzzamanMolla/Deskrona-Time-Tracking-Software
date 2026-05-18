@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1 — Calendar Day Detail & Bug Fix
+
+### 🆕 Day Detail Panel
+- Click a calendar day to show: top apps (up to 10), keyboard/mouse counts
+- Auto-loads filtered dashboard data + input stats for selected day
+
+### 🐛 Fixes
+- Calendar showing blank day cells: SQL subquery alias `day` not visible in SQLite — replaced with `date(t.start_time)`
+- Blank app screen on startup: `filterType` ref accidentally deleted during calendar code merge — restored
+
 ## 0.1.0 — Calendar View & Month Overview
 
 ### 🆕 Calendar View

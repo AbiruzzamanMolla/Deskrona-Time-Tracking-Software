@@ -933,7 +933,7 @@ pub fn get_calendar_month(app: &AppHandle, from: &str, to: &str) -> Result<Vec<C
         "SELECT date(t.start_time) as day,
                 COALESCE(SUM(t.duration), 0) as total_secs,
                 COUNT(DISTINCT t.app_name) as apps,
-                CASE WHEN EXISTS (SELECT 1 FROM screenshots s WHERE s.user_id = t.user_id AND date(s.captured_at) = day) THEN 1 ELSE 0 END as has_ss
+                CASE WHEN EXISTS (SELECT 1 FROM screenshots s WHERE s.user_id = t.user_id AND date(s.captured_at) = date(t.start_time)) THEN 1 ELSE 0 END as has_ss
          FROM time_logs t
          WHERE t.user_id = ?1 AND date(t.start_time) >= ?2 AND date(t.start_time) <= ?3
          GROUP BY day
