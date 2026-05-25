@@ -611,11 +611,19 @@ pub fn run() {
                                 .position(settings.overlay_position_x as f64, settings.overlay_position_y as f64)
                                 .build()
                                 {
+                                    let win_clone = win.clone();
                                     win.on_window_event(move |event| {
-                                        if let tauri::WindowEvent::Moved(position) = event {
-                                            if let Ok(mut pos_guard) = OVERLAY_POS.lock() {
-                                                *pos_guard = Some(*position);
+                                        match event {
+                                            tauri::WindowEvent::CloseRequested { api, .. } => {
+                                                api.prevent_close();
+                                                let _ = win_clone.hide();
                                             }
+                                            tauri::WindowEvent::Moved(position) => {
+                                                if let Ok(mut pos_guard) = OVERLAY_POS.lock() {
+                                                    *pos_guard = Some(*position);
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                     });
                                 }

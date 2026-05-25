@@ -12,7 +12,11 @@ use regex::Regex;
 use std::os::windows::process::CommandExt;
 
 use crate::db::get_db_path;
-use screenshots::Screen;
+use xcap::Monitor;
+
+fn is_wayland() -> bool {
+    std::env::var("WAYLAND_DISPLAY").is_ok()
+}
 
 // Tracking states: 0 = stopped, 1 = running, 2 = paused
 pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // 1: running, 2: paused, 0: stopped
@@ -278,11 +282,18 @@ pub fn start_tracking(app: AppHandle) {
 
     // --- Screenshot Thread ---
     let app_clone = app.clone();
+    let is_wayland = is_wayland();
+    if is_wayland {
+        eprintln!("Deskrona: Wayland detected, X11 screen capture unavailable. Screenshots disabled.");
+    }
     std::thread::spawn(move || {
     let mut last_screenshot_time: Option<Instant> = None; // None = trigger immediately on first loop
 
         loop {
             std::thread::sleep(Duration::from_secs(5));
+            if is_wayland {
+                continue; // X11 capture unsupported on Wayland
+            }
             let state = TRACKING_STATE.load(Ordering::SeqCst);
             if state != 1 {
                 continue; // Only take screenshots when running
@@ -305,45 +316,45 @@ pub fn start_tracking(app: AppHandle) {
                 let dir = crate::db::get_screenshot_dir(&app_clone);
                 let now_str = Utc::now().format("%Y%m%d_%H%M%S").to_string();
 
-                if let Ok(screens) = Screen::all() {
-                    let mut min_x = 0;
-                    let mut min_y = 0;
-                    let mut max_x = 0;
-                    let mut max_y = 0;
-                    for screen in &screens {
-                        let info = screen.display_info;
-                        if info.x < min_x { min_x = info.x; }
-                        if info.y < min_y { min_y = info.y; }
-                        if info.x + info.width as i32 > max_x { max_x = info.x + info.width as i32; }
-                        if info.y + info.height as i32 > max_y { max_y = info.y + info.height as i32; }
-                    }
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Ok(monitors) = Monitor::all() {
+                        let mut min_x = i32::MAX;
+                        let mut min_y = i32::MAX;
+                        let mut max_x = i32::MIN;
+                        let mut max_y = i32::MIN;
 
-                    let width = (max_x - min_x) as u32;
-                    let height = (max_y - min_y) as u32;
-                    if width > 0 && height > 0 {
-                        let mut combined_image = image::RgbaImage::new(width, height);
-                        for screen in screens {
-                            if let Ok(img) = screen.capture() {
-                                let info = screen.display_info;
-                                let offset_x = (info.x - min_x) as i64;
-                                let offset_y = (info.y - min_y) as i64;
-
-                                let w = img.width();
-                                let h = img.height();
-                                let raw = img.into_raw();
-                                if let Some(converted_img) = image::RgbaImage::from_raw(w, h, raw) {
-                                    image::imageops::overlay(&mut combined_image, &converted_img, offset_x, offset_y);
-                                }
+                        for monitor in &monitors {
+                            if let (Ok(x), Ok(y), Ok(w), Ok(h)) = (monitor.x(), monitor.y(), monitor.width(), monitor.height()) {
+                                let x = x;
+                                let y = y;
+                                let w = w as i32;
+                                let h = h as i32;
+                                if x < min_x { min_x = x; }
+                                if y < min_y { min_y = y; }
+                                if x + w > max_x { max_x = x + w; }
+                                if y + h > max_y { max_y = y + h; }
                             }
                         }
-                        let filename = format!("screenshot_{}.png", now_str);
-                        let mut path = std::path::PathBuf::from(&dir);
-                        path.push(&filename);
-                        if let Ok(_) = combined_image.save(&path) {
-                            let _ = crate::db::insert_screenshot(&app_clone, &get_active_user_id(), &path.to_string_lossy());
+
+                        let (width, height) = ((max_x - min_x) as u32, (max_y - min_y) as u32);
+                        if width > 0 && height > 0 {
+                            let mut combined_image = image::RgbaImage::new(width, height);
+                            for monitor in monitors {
+                                if let (Ok(x), Ok(y), Ok(img)) = (monitor.x(), monitor.y(), monitor.capture_image()) {
+                                    let offset_x = (x - min_x) as i64;
+                                    let offset_y = (y - min_y) as i64;
+                                    image::imageops::overlay(&mut combined_image, &img, offset_x, offset_y);
+                                }
+                            }
+                            let filename = format!("screenshot_{}.png", now_str);
+                            let mut path = std::path::PathBuf::from(&dir);
+                            path.push(&filename);
+                            if let Ok(()) = combined_image.save(&path) {
+                                let _ = crate::db::insert_screenshot(&app_clone, &get_active_user_id(), &path.to_string_lossy());
+                            }
                         }
                     }
-                }
+                }));
             }
         }
     });
