@@ -944,9 +944,13 @@ const loadActiveSession = async () => {
 // ─── Dashboard Data ──────────────────────────────────────────────
 const refreshDashboard = async () => {
   try {
+    const localBackup = { ...dashboardData.value };
     const data = await proxyGetDashboardData() as DashboardData;
+    // Never let timer go backward — local counter is authoritative
+    if (data.total_active_seconds < localBackup.total_active_seconds) {
+      data.total_active_seconds = localBackup.total_active_seconds;
+    }
     dashboardData.value = data;
-    // Sync the local timer with backend data
     if (data.total_active_seconds !== undefined) {
       activeSessionSeconds.value = data.total_active_seconds;
     }

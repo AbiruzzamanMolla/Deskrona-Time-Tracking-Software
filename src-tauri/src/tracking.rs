@@ -366,11 +366,12 @@ pub fn start_tracking(app: AppHandle) {
         let mut last_keys: Vec<device_query::Keycode> = device_state.get_keys();
         let mut last_mouse_input_time = Instant::now();
         let mut last_keyboard_input_time = Instant::now();
-        // Reload threshold every N seconds to respect settings changes
         let mut idle_threshold = idle_threshold_base;
         let mut monitor_mouse = true;
         let mut monitor_keyboard = true;
         let mut threshold_reload_counter: u32 = 0;
+        let mut window_flush_counter: u32 = 0;
+        let mut active_window_failures: u32 = 0;
         if let Ok(s) = crate::db::get_settings(&app) {
             monitor_mouse = s.idle_monitor_mouse;
             monitor_keyboard = s.idle_monitor_keyboard;
@@ -379,14 +380,50 @@ pub fn start_tracking(app: AppHandle) {
         loop {
             std::thread::sleep(Duration::from_secs(1));
 
-            // Reload idle threshold from settings every 60 seconds
             threshold_reload_counter += 1;
+            window_flush_counter += 1;
             if threshold_reload_counter >= 60 {
                 threshold_reload_counter = 0;
                 idle_threshold = Duration::from_secs(crate::db::get_idle_threshold_secs(&app));
                 if let Ok(s) = crate::db::get_settings(&app) {
                     monitor_mouse = s.idle_monitor_mouse;
                     monitor_keyboard = s.idle_monitor_keyboard;
+                }
+            }
+
+            // Periodic flush to DB every 60s to persist time even without window changes
+            if window_flush_counter >= 60 {
+                window_flush_counter = 0;
+                if let Ok(mut current) = CURRENT_WINDOW.lock() {
+                    if let Some(cw) = current.take() {
+                        let now = Local::now();
+                        let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
+                        if duration > 0 {
+                            if let Ok(conn) = Connection::open(&db_path) {
+                                let _ = conn.execute(
+                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    (
+                                        Uuid::new_v4().to_string(),
+                                        get_active_user_id(),
+                                        &cw.app_name,
+                                        &cw.window_title,
+                                        &cw.start_time.to_rfc3339(),
+                                        &now.to_rfc3339(),
+                                        &duration,
+                                        &now.to_rfc3339(),
+                                        &now.to_rfc3339(),
+                                        "active",
+                                    ),
+                                );
+                            }
+                        }
+                        *current = Some(ActiveWindowInfo {
+                            app_name: cw.app_name.clone(),
+                            window_title: cw.window_title.clone(),
+                            start_time: now,
+                        });
+                    }
                 }
             }
 
@@ -587,7 +624,22 @@ pub fn start_tracking(app: AppHandle) {
                         }
                     }
                 }
-                Err(_) => {}
+                Err(_) => {
+                    active_window_failures += 1;
+                    // Create fallback window on repeated failures (Linux/Wayland)
+                    if active_window_failures >= 3 {
+                        if let Ok(mut current) = CURRENT_WINDOW.lock() {
+                            if current.is_none() {
+                                *current = Some(ActiveWindowInfo {
+                                    app_name: "Desktop".to_string(),
+                                    window_title: "Active".to_string(),
+                                    start_time: Local::now(),
+                                });
+                                active_window_failures = 0;
+                            }
+                        }
+                    }
+                }
             }
         }
     });
