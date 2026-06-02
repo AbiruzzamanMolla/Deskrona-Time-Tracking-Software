@@ -26,7 +26,7 @@ pub fn get_today_active_seconds(app: &AppHandle) -> Result<i64> {
     }
 
     let total_active: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time) = date('now', 'localtime') AND status = 'active'",
+        "SELECT COALESCE(SUM(duration), 0) FROM time_logs WHERE user_id = ?1 AND date(start_time, 'localtime') = date('now', 'localtime') AND status = 'active'",
         params![user_id],
         |row| row.get(0),
     ).unwrap_or(0);
@@ -161,6 +161,17 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
         ("pomodoro_auto_start", "ALTER TABLE settings ADD COLUMN pomodoro_auto_start INTEGER NOT NULL DEFAULT 1"),
         ("pomodoro_sound_enabled", "ALTER TABLE settings ADD COLUMN pomodoro_sound_enabled INTEGER NOT NULL DEFAULT 1"),
         ("deleted_at", "ALTER TABLE settings ADD COLUMN deleted_at TEXT"),
+        ("break_reminder_enabled", "ALTER TABLE settings ADD COLUMN break_reminder_enabled INTEGER NOT NULL DEFAULT 0"),
+        ("break_mini_interval_minutes", "ALTER TABLE settings ADD COLUMN break_mini_interval_minutes INTEGER NOT NULL DEFAULT 20"),
+        ("break_mini_duration_seconds", "ALTER TABLE settings ADD COLUMN break_mini_duration_seconds INTEGER NOT NULL DEFAULT 20"),
+        ("break_long_duration_seconds", "ALTER TABLE settings ADD COLUMN break_long_duration_seconds INTEGER NOT NULL DEFAULT 300"),
+        ("break_mini_breaks_before_long", "ALTER TABLE settings ADD COLUMN break_mini_breaks_before_long INTEGER NOT NULL DEFAULT 4"),
+        ("break_postpone_limit", "ALTER TABLE settings ADD COLUMN break_postpone_limit INTEGER NOT NULL DEFAULT 3"),
+        ("break_postpone_duration_minutes", "ALTER TABLE settings ADD COLUMN break_postpone_duration_minutes INTEGER NOT NULL DEFAULT 2"),
+        ("break_pre_notification_seconds", "ALTER TABLE settings ADD COLUMN break_pre_notification_seconds INTEGER NOT NULL DEFAULT 10"),
+        ("break_sound_volume", "ALTER TABLE settings ADD COLUMN break_sound_volume INTEGER NOT NULL DEFAULT 50"),
+        ("break_ideas_enabled", "ALTER TABLE settings ADD COLUMN break_ideas_enabled INTEGER NOT NULL DEFAULT 1"),
+        ("break_fullscreen", "ALTER TABLE settings ADD COLUMN break_fullscreen INTEGER NOT NULL DEFAULT 1"),
     ];
 
     for (col, sql) in migrations {
@@ -230,15 +241,28 @@ pub struct Settings {
     pub pomodoro_sessions_before_long: i32,
     pub pomodoro_auto_start: bool,
     pub pomodoro_sound_enabled: bool,
+    // Break Reminder settings (Stretchly-style)
+    pub break_reminder_enabled: bool,
+    pub break_mini_interval_minutes: i32,
+    pub break_mini_duration_seconds: i32,
+    pub break_long_duration_seconds: i32,
+    pub break_mini_breaks_before_long: i32,
+    pub break_postpone_limit: i32,
+    pub break_postpone_duration_minutes: i32,
+    pub break_pre_notification_seconds: i32,
+    pub break_sound_volume: i32,
+    pub break_ideas_enabled: bool,
+    pub break_fullscreen: bool,
 }
 
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     let user_id = crate::tracking::get_active_user_id();
     
     // Try to get settings for the active user
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1) FROM settings WHERE user_id = ?1 LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1), COALESCE(break_reminder_enabled, 0), COALESCE(break_mini_interval_minutes, 20), COALESCE(break_mini_duration_seconds, 20), COALESCE(break_long_duration_seconds, 300), COALESCE(break_mini_breaks_before_long, 4), COALESCE(break_postpone_limit, 3), COALESCE(break_postpone_duration_minutes, 2), COALESCE(break_pre_notification_seconds, 10), COALESCE(break_sound_volume, 50), COALESCE(break_ideas_enabled, 1), COALESCE(break_fullscreen, 1) FROM settings WHERE user_id = ?1 LIMIT 1")?;
     
     let result = stmt.query_row(params![user_id], |row| {
         Ok(Settings {
@@ -264,6 +288,17 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             pomodoro_sessions_before_long: row.get(19)?,
             pomodoro_auto_start: row.get::<_, i32>(20)? != 0,
             pomodoro_sound_enabled: row.get::<_, i32>(21)? != 0,
+            break_reminder_enabled: row.get::<_, i32>(22)? != 0,
+            break_mini_interval_minutes: row.get(23)?,
+            break_mini_duration_seconds: row.get(24)?,
+            break_long_duration_seconds: row.get(25)?,
+            break_mini_breaks_before_long: row.get(26)?,
+            break_postpone_limit: row.get(27)?,
+            break_postpone_duration_minutes: row.get(28)?,
+            break_pre_notification_seconds: row.get(29)?,
+            break_sound_volume: row.get(30)?,
+            break_ideas_enabled: row.get::<_, i32>(31)? != 0,
+            break_fullscreen: row.get::<_, i32>(32)? != 0,
         })
     });
 
@@ -306,6 +341,17 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
                 pomodoro_sessions_before_long: 4,
                 pomodoro_auto_start: true,
                 pomodoro_sound_enabled: true,
+                break_reminder_enabled: false,
+                break_mini_interval_minutes: 20,
+                break_mini_duration_seconds: 20,
+                break_long_duration_seconds: 300,
+                break_mini_breaks_before_long: 4,
+                break_postpone_limit: 3,
+                break_postpone_duration_minutes: 2,
+                break_pre_notification_seconds: 10,
+                break_sound_volume: 50,
+                break_ideas_enabled: true,
+                break_fullscreen: true,
             })
         }
         Err(e) => Err(e),
@@ -315,6 +361,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
 pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE settings SET 
@@ -340,8 +387,19 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             pomodoro_sessions_before_long = ?20,
             pomodoro_auto_start = ?21,
             pomodoro_sound_enabled = ?22,
-            updated_at = ?23 
-        WHERE user_id = ?24",
+            break_reminder_enabled = ?23,
+            break_mini_interval_minutes = ?24,
+            break_mini_duration_seconds = ?25,
+            break_long_duration_seconds = ?26,
+            break_mini_breaks_before_long = ?27,
+            break_postpone_limit = ?28,
+            break_postpone_duration_minutes = ?29,
+            break_pre_notification_seconds = ?30,
+            break_sound_volume = ?31,
+            break_ideas_enabled = ?32,
+            break_fullscreen = ?33,
+            updated_at = ?34 
+        WHERE user_id = ?35",
         params![
             settings.language,
             settings.theme,
@@ -365,6 +423,17 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.pomodoro_sessions_before_long,
             settings.pomodoro_auto_start as i32,
             settings.pomodoro_sound_enabled as i32,
+            settings.break_reminder_enabled as i32,
+            settings.break_mini_interval_minutes,
+            settings.break_mini_duration_seconds,
+            settings.break_long_duration_seconds,
+            settings.break_mini_breaks_before_long,
+            settings.break_postpone_limit,
+            settings.break_postpone_duration_minutes,
+            settings.break_pre_notification_seconds,
+            settings.break_sound_volume,
+            settings.break_ideas_enabled as i32,
+            settings.break_fullscreen as i32,
             now,
             crate::tracking::get_active_user_id()
         ],
@@ -498,6 +567,7 @@ pub struct UrlEntry {
 pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     let user_id = crate::tracking::get_active_user_id();
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -510,7 +580,7 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     // Idle time: count pairs of idle_start/idle_end events today
     let idle_events: Vec<(String, String)> = {
         let mut stmt = conn.prepare(
-            "SELECT type, timestamp FROM activity_events WHERE user_id = ?1 AND (type = 'idle_start' OR type = 'idle_end') AND date(timestamp) = ?2 ORDER BY timestamp ASC"
+            "SELECT type, timestamp FROM activity_events WHERE user_id = ?1 AND (type = 'idle_start' OR type = 'idle_end') AND date(timestamp, 'localtime') = ?2 ORDER BY timestamp ASC"
         )?;
         let rows = stmt.query_map(params![user_id, today], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -534,7 +604,7 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     let session_seconds: i64 = conn.query_row(
         "SELECT COALESCE(SUM(
             CAST((julianday(COALESCE(end_time, datetime('now'))) - julianday(start_time)) * 86400 AS INTEGER)
-        ), 0) FROM sessions WHERE user_id = ?1 AND date(start_time) = ?2",
+        ), 0) FROM sessions WHERE user_id = ?1 AND date(start_time, 'localtime') = ?2",
         params![user_id, today],
         |row| row.get(0),
     )?;
@@ -545,7 +615,7 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
             "SELECT t.app_name, SUM(t.duration) as total_secs, COUNT(*) as cnt, COALESCE(c.category, 'neutral') as cat 
              FROM time_logs t 
              LEFT JOIN app_categories c ON t.app_name = c.app_name 
-             WHERE t.user_id = ?1 AND date(t.start_time) = ?2 
+             WHERE t.user_id = ?1 AND date(t.start_time, 'localtime') = ?2 
              GROUP BY t.app_name 
              ORDER BY total_secs DESC LIMIT 100"
         )?;
@@ -563,7 +633,7 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
     // Recent URL visits today
     let recent_urls: Vec<UrlEntry> = {
         let mut stmt = conn.prepare(
-            "SELECT type, timestamp FROM activity_events WHERE user_id = ?1 AND type LIKE 'url:%' AND date(timestamp) = ?2 ORDER BY timestamp DESC LIMIT 30"
+            "SELECT type, timestamp FROM activity_events WHERE user_id = ?1 AND type LIKE 'url:%' AND date(timestamp, 'localtime') = ?2 ORDER BY timestamp DESC LIMIT 30"
         )?;
         let rows = stmt.query_map(params![user_id, today], |row| {
             let raw: String = row.get(0)?;
@@ -577,10 +647,10 @@ pub fn get_dashboard_data(app: &AppHandle) -> Result<DashboardData> {
 
     // Keyboard/Mouse activity counts
     let keyboard_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'keyboard' AND date(timestamp) = ?2",
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'keyboard' AND date(timestamp, 'localtime') = ?2",
         params![user_id, today], |r| r.get(0))?;
     let mouse_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'mouse' AND date(timestamp) = ?2",
+        "SELECT COUNT(*) FROM activity_events WHERE user_id = ?1 AND type = 'mouse' AND date(timestamp, 'localtime') = ?2",
         params![user_id, today], |r| r.get(0))?;
 
     Ok(DashboardData {

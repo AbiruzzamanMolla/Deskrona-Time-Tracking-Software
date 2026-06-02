@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Break Time</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      user-select: none;
+    }
+    .break-overlay {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+      color: #f1f5f9;
+      position: relative;
+      overflow: hidden;
+    }
+    .break-overlay::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(ellipse at center, rgba(59, 130, 246, 0.08) 0%, transparent 70%);
+      animation: pulse 8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.1); }
+    }
+    .break-content {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      max-width: 700px;
+      padding: 40px;
+    }
+    .break-type-badge {
+      display: inline-block;
+      padding: 6px 18px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 24px;
+    }
+    .badge-mini {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .badge-long {
+      background: rgba(168, 85, 247, 0.2);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+    .break-icon {
+      font-size: 4rem;
+      margin-bottom: 16px;
+      animation: float 3s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    .break-title {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #f1f5f9, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .break-idea {
+      font-size: 1.2rem;
+      color: #94a3b8;
+      margin-bottom: 40px;
+      line-height: 1.6;
+      min-height: 3em;
+    }
+    .countdown-ring {
+      position: relative;
+      width: 160px;
+      height: 160px;
+      margin: 0 auto 40px;
+    }
+    .countdown-ring svg {
+      transform: rotate(-90deg);
+      width: 160px;
+      height: 160px;
+    }
+    .countdown-ring circle {
+      fill: none;
+      stroke-width: 6;
+      cx: 80;
+      cy: 80;
+      r: 72;
+    }
+    .ring-bg { stroke: rgba(148, 163, 184, 0.15); }
+    .ring-fg {
+      stroke: #3b82f6;
+      stroke-linecap: round;
+      stroke-dasharray: 452.39;
+      stroke-dashoffset: 0;
+      transition: stroke-dashoffset 1s linear, stroke 0.5s ease;
+    }
+    .ring-fg.long-break {
+      stroke: #a855f7;
+    }
+    .countdown-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 2.2rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: #f1f5f9;
+    }
+    .progress-label {
+      font-size: 0.8rem;
+      color: #64748b;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .break-actions {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .break-btn {
+      padding: 12px 32px;
+      border-radius: 12px;
+      border: none;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .break-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    }
+    .break-btn:active { transform: translateY(0); }
+    .btn-skip {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+    }
+    .btn-skip:hover { background: linear-gradient(135deg, #60a5fa, #3b82f6); }
+    .btn-postpone {
+      background: rgba(148, 163, 184, 0.1);
+      color: #94a3b8;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .btn-postpone:hover {
+      background: rgba(148, 163, 184, 0.2);
+      color: #e2e8f0;
+    }
+    .postpone-info {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 16px;
+    }
+    .particles {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .particle {
+      position: absolute;
+      border-radius: 50%;
+      opacity: 0.15;
+      animation: drift linear infinite;
+    }
+    @keyframes drift {
+      0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+      10% { opacity: 0.15; }
+      90% { opacity: 0.15; }
+      100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="break-overlay" id="breakOverlay">
+    <div class="particles" id="particles"></div>
+    <div class="break-content">
+      <div class="break-type-badge badge-mini" id="breakBadge">MINI BREAK</div>
+      <div class="break-icon" id="breakIcon">🧘</div>
+      <h1 class="break-title" id="breakTitle">Time for a Break!</h1>
+      <p class="break-idea" id="breakIdea">Stand up and stretch your arms above your head</p>
+      
+      <div class="countdown-ring">
+        <svg viewBox="0 0 160 160">
+          <circle class="ring-bg" />
+          <circle class="ring-fg" id="ringFg" />
+        </svg>
+        <div class="countdown-text" id="countdownText">0:20</div>
+      </div>
+      
+      <p class="progress-label" id="progressLabel">Break in progress</p>
+      
+      <div class="break-actions">
+        <button class="break-btn btn-postpone" id="btnPostpone" onclick="postponeBreak()">
+          ⏰ Postpone
+        </button>
+        <button class="break-btn btn-skip" id="btnSkip" onclick="skipBreak()">
+          ✓ End Break
+        </button>
+      </div>
+      <p class="postpone-info" id="postponeInfo"></p>
+    </div>
+  </div>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+    const { listen } = window.__TAURI__.event;
+    
+    const CIRCUMFERENCE = 2 * Math.PI * 72; // ~452.39
+    let totalDuration = 0;
+    let remaining = 0;
+    let isLong = false;
+    let ideaIndex = 0;
+    let audioCtx = null;
+    let postponeCount = 0;
+    let postponeLimit = 3;
+    let soundVolume = 0.12;
+    
+    // Break ideas shown during breaks
+    const breakIdeas = [
+      '🧘 Stand up and stretch your arms above your head',
+      '👀 Look at something 20 feet away for 20 seconds',
+      '💧 Take a sip of water',
+      '🫁 Take 5 deep breaths — inhale for 4s, exhale for 6s',
+      '🚶 Walk around your room for a minute',
+      '🤸 Roll your shoulders forward and backward 10 times',
+      '😊 Smile! It releases endorphins and reduces stress',
+      '🌿 Look out a window and focus on something green',
+      '👋 Shake out your hands and wrists to release tension',
+      '🧠 Close your eyes and think of 3 things you\'re grateful for',
+      '💪 Do 10 desk push-ups or wall push-ups',
+      '🔄 Rotate your neck slowly in circles, 5 times each direction',
+      '🦶 Point your toes up and down 20 times to improve circulation',
+      '🎵 Listen to a favorite song snippet with eyes closed',
+      '🪑 Check your posture — sit up straight, feet flat on floor',
+      '🌻 Take a moment to appreciate your workspace',
+      '🤲 Press your palms together firmly for 10 seconds, then release',
+      '📝 Write down one thing you accomplished today so far',
+      '🧘‍♂️ Do a quick 30-second meditation — focus on breathing',
+      '💺 Stand up and do 5 squats',
+      '👁️ Remember: 20-20-20 rule — every 20 min, look at something 20ft away for 20 sec',
+      '🎨 Look at something colorful — it refreshes visual processing',
+      '🗣️ Say something positive to yourself or a colleague',
+      '🦴 Stretch your fingers wide, hold 5s, make a fist. Repeat 5 times',
+      '🌞 If possible, step outside for a breath of fresh air',
+      '☕ Refill your water bottle or make a healthy drink',
+      '🧹 Organize one small area of your desk',
+      '🫶 Give yourself a gentle hand massage to relieve tension',
+      '🎶 Hum your favorite tune for 30 seconds',
+      '🫁 Box breathing: inhale 4s, hold 4s, exhale 4s, hold 4s'
+    ];
+    
+    // Create floating particles
+    function createParticles() {
+      const container = document.getElementById('particles');
+      for (let i = 0; i < 20; i++) {
+        const p = document.createElement('div');
+        p.className = 'particle';
+        const size = Math.random() * 6 + 2;
+        p.style.width = size + 'px';
+        p.style.height = size + 'px';
+        p.style.left = Math.random() * 100 + '%';
+        p.style.background = isLong ? '#a855f7' : '#3b82f6';
+        p.style.animationDuration = (Math.random() * 15 + 10) + 's';
+        p.style.animationDelay = (Math.random() * 10) + 's';
+        container.appendChild(p);
+      }
+    }
+    
+    function updateUI() {
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      document.getElementById('countdownText').textContent = mins + ':' + String(secs).padStart(2, '0');
+      
+      const progress = totalDuration > 0 ? remaining / totalDuration : 0;
+      const offset = CIRCUMFERENCE * (1 - progress);
+      const ring = document.getElementById('ringFg');
+      ring.style.strokeDashoffset = offset;
+      
+      if (isLong) {
+        ring.classList.add('long-break');
+      } else {
+        ring.classList.remove('long-break');
+      }
+    }
+    
+    function updatePostponeInfo() {
+      const info = document.getElementById('postponeInfo');
+      const btn = document.getElementById('btnPostpone');
+      if (postponeCount >= postponeLimit) {
+        info.textContent = 'No postpones remaining';
+        btn.style.opacity = '0.4';
+        btn.style.pointerEvents = 'none';
+      } else {
+        info.textContent = `${postponeLimit - postponeCount} postpone${postponeLimit - postponeCount > 1 ? 's' : ''} remaining`;
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
+      }
+    }
+    
+    function playBreakSound() {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // Pleasant chime
+        const frequencies = [523.25, 659.25, 783.99]; // C5, E5, G5
+        frequencies.forEach((freq, i) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.value = soundVolume;
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5 + i * 0.15);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(audioCtx.currentTime + i * 0.15);
+          osc.stop(audioCtx.currentTime + 1.5 + i * 0.15);
+        });
+      } catch (e) {}
+    }
+    
+    function playEndSound() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 440;
+        gain.gain.value = soundVolume;
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+      } catch (e) {}
+    }
+    
+    function setBreakType(type) {
+      isLong = type === 'long';
+      const badge = document.getElementById('breakBadge');
+      const icon = document.getElementById('breakIcon');
+      const title = document.getElementById('breakTitle');
+      
+      if (isLong) {
+        badge.className = 'break-type-badge badge-long';
+        badge.textContent = 'LONG BREAK';
+        icon.textContent = '🌿';
+        title.textContent = 'Take a Longer Break!';
+      } else {
+        badge.className = 'break-type-badge badge-mini';
+        badge.textContent = 'MINI BREAK';
+        icon.textContent = '🧘';
+        title.textContent = 'Time for a Break!';
+      }
+    }
+    
+    function setBreakIdea(idea) {
+      if (idea) {
+        document.getElementById('breakIdea').textContent = idea;
+      } else {
+        ideaIndex = (ideaIndex + 1) % breakIdeas.length;
+        document.getElementById('breakIdea').textContent = breakIdeas[ideaIndex];
+      }
+    }
+    
+    async function postponeBreak() {
+      try {
+        const result = await invoke('cmd_break_postpone');
+        if (result) {
+          postponeCount = result.postpone_count || 0;
+          postponeLimit = result.postpone_limit || 3;
+          updatePostponeInfo();
+          // The window will be hidden by the backend
+          playEndSound();
+        }
+      } catch (e) {
+        console.error('Postpone failed:', e);
+      }
+    }
+    
+    async function skipBreak() {
+      try {
+        await invoke('cmd_break_skip');
+        playEndSound();
+      } catch (e) {
+        console.error('Skip failed:', e);
+      }
+    }
+    
+    async function init() {
+      createParticles();
+      
+      // Set ring circumference
+      document.getElementById('ringFg').style.strokeDasharray = CIRCUMFERENCE;
+      
+      // Get initial state FIRST
+      try {
+        const state = await invoke('cmd_break_status');
+        if (state) {
+          postponeCount = state.postpone_count || 0;
+          postponeLimit = state.postpone_limit || 3;
+          isLong = state.is_long;
+          totalDuration = state.countdown_secs || 0;
+          remaining = state.countdown_secs || 0;
+          setBreakType(isLong ? 'long' : 'mini');
+          if (state.current_idea) setBreakIdea(state.current_idea);
+          updatePostponeInfo();
+        }
+        const st = await invoke("get_settings");
+        if (st && st.break_sound_volume !== undefined) {
+          soundVolume = st.break_sound_volume / 100;
+        }
+      } catch (e) {}
+      updateUI();
+      
+      // Listen for break events
+      await listen('break-started', (event) => {
+        const idea = event.payload;
+        playBreakSound();
+        setBreakIdea(idea);
+        
+        // Get current state for duration
+        invoke('cmd_break_status').then(state => {
+          if (state) {
+            isLong = state.is_long;
+            setBreakType(isLong ? 'long' : 'mini');
+            totalDuration = isLong ? 300 : 20;
+            remaining = totalDuration;
+            postponeCount = state.postpone_count || 0;
+            postponeLimit = state.postpone_limit || 3;
+            updatePostponeInfo();
+            updateUI();
+          }
+        });
+      });
+      
+      await listen('break-pre-notification', (event) => {
+        const idea = event.payload;
+        setBreakIdea(idea);
+        // Pre-break: show short countdown
+        invoke('cmd_break_status').then(state => {
+          if (state) {
+            isLong = state.is_long;
+            setBreakType(isLong ? 'long' : 'mini');
+            totalDuration = state.countdown_secs || 10;
+            remaining = totalDuration;
+            document.getElementById('progressLabel').textContent = 'Break starting soon...';
+            updateUI();
+          }
+        });
+      });
+      
+      await listen('break-finished', () => {
+        document.getElementById('progressLabel').textContent = 'Break complete! Enjoy your work.';
+      });
+      
+      await listen('break-postponed', () => {
+        // Window will be hidden
+      });
+      
+      await listen('break-reset', () => {
+        remaining = 0;
+        updateUI();
+      });
+      
+      // Countdown timer
+      setInterval(async () => {
+        if (remaining > 0) {
+          remaining--;
+          updateUI();
+        } else {
+          // Fetch current state to sync
+          try {
+            const state = await invoke('cmd_break_status');
+            if (state && state.countdown_secs !== undefined) {
+              totalDuration = state.countdown_secs;
+              remaining = state.countdown_secs;
+              isLong = state.is_long;
+              setBreakType(isLong ? 'long' : 'mini');
+            }
+          } catch (e) {}
+        }
+      }, 1000);
+      
+      // Periodic sync
+      setInterval(async () => {
+        try {
+          const state = await invoke('cmd_break_status');
+          if (state) {
+            remaining = state.countdown_secs || 0;
+            if (totalDuration === 0) totalDuration = remaining;
+            isLong = state.is_long;
+            setBreakType(isLong ? 'long' : 'mini');
+            postponeCount = state.postpone_count || 0;
+            postponeLimit = state.postpone_limit || 3;
+            updatePostponeInfo();
+            updateUI();
+          }
+        } catch (e) {}
+      }, 3000);
+    }
+    
+    init();
+  </script>
+</body>
+</html>

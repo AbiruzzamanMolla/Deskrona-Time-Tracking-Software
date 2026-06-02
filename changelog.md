@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.2 — Stretchly Integration & UI Improvements
+
+### 🆕 Stretchly Break Reminder System
+- Full Stretchly-like background break reminder daemon tracking active/idle work
+- Interactive fullscreen overlay window triggered across all connected monitors
+- Custom animations, floating particles, chime sounds, and customizable break ideas
+- Settings to customize mini break duration, interval, long break duration, pre-break warnings, and postpone limits
+- Full list of break API endpoints registered under API Config
+
+### 💄 Modern UI Refinement
+- Converted all Settings checkboxes to premium modern toggle switches with sliding transitions and theme-aware colors
+
+### 🐛 Fixes & Backend Stability
+- Fixed timer freeze on break overlay due to idle tracking detection (timer now counts down properly)
+- Solved sqlite database lockups under high-frequency writes by setting 5-second connection busy timeouts
+- Fixed zero-active-seconds reporting between midnight and 6:00 AM by correctly using local timezone query casting (`date(start_time, 'localtime')`)
+
 ## 0.1.1 — Calendar Day Detail & Bug Fix
 
 ### 🆕 Day Detail Panel

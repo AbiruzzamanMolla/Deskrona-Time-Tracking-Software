@@ -4,6 +4,7 @@ mod backup;
 mod config;
 mod auth;
 mod api_config;
+mod break_reminder;
 
 use tauri_plugin_autostart::ManagerExt;
 use serde::Serialize;
@@ -223,9 +224,25 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
     let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
+    // Break reminder menu items
+    let break_status = break_reminder::get_break_state(app);
+    let break_text = format!("Break: {}", break_status.state);
+    let break_item = MenuItem::with_id(app, "break_status", &break_text, false, None::<&str>)?;
+    let break_pause_30 = MenuItem::with_id(app, "break_pause_30m", "Pause Breaks 30 min", true, None::<&str>)?;
+    let break_pause_1h = MenuItem::with_id(app, "break_pause_1h", "Pause Breaks 1 hour", true, None::<&str>)?;
+    let break_pause_2h = MenuItem::with_id(app, "break_pause_2h", "Pause Breaks 2 hours", true, None::<&str>)?;
+    let break_pause_5h = MenuItem::with_id(app, "break_pause_5h", "Pause Breaks 5 hours", true, None::<&str>)?;
+    let break_resume = MenuItem::with_id(app, "break_resume", "Resume Breaks", true, None::<&str>)?;
+    let break_reset = MenuItem::with_id(app, "break_reset", "Reset Break Cycle", true, None::<&str>)?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    Menu::with_items(app, &[&status_item, &dashboard_i, &sep1, &start_i, &pause_i, &stop_i, &sep2, &quit_i])
+    Menu::with_items(app, &[
+        &status_item, &dashboard_i, &sep1,
+        &start_i, &pause_i, &stop_i, &sep2,
+        &break_item, &break_pause_30, &break_pause_1h, &break_pause_2h, &break_pause_5h, &break_resume, &break_reset, &sep3,
+        &quit_i,
+    ])
 }
 
 #[tauri::command]
@@ -431,6 +448,7 @@ pub fn run() {
 
             tracking::start_tracking(app.handle().clone());
             backup::start_backup_scheduler(app.handle().clone());
+            break_reminder::start_break_reminder(app.handle().clone());
 
             let menu = build_tray_menu(app.handle())?;
 
@@ -470,6 +488,24 @@ pub fn run() {
                     }
                     "quit" => {
                         std::process::exit(0);
+                    }
+                    "break_pause_30m" => {
+                        let _ = crate::break_reminder::pause_break_reminder(app, 30);
+                    }
+                    "break_pause_1h" => {
+                        let _ = crate::break_reminder::pause_break_reminder(app, 60);
+                    }
+                    "break_pause_2h" => {
+                        let _ = crate::break_reminder::pause_break_reminder(app, 120);
+                    }
+                    "break_pause_5h" => {
+                        let _ = crate::break_reminder::pause_break_reminder(app, 300);
+                    }
+                    "break_resume" => {
+                        let _ = crate::break_reminder::resume_break_reminder(app);
+                    }
+                    "break_reset" => {
+                        let _ = crate::break_reminder::reset_break_cycle(app);
                     }
                     _ => {}
                 })
@@ -639,6 +675,78 @@ pub fn run() {
                         }
                     }
 
+                    // Break overlay window management
+                    {
+                        let break_st = crate::break_reminder::get_break_state(&app_handle_bg);
+                        let should_show_break = break_st.state == "on_break" || break_st.state == "pre_break";
+                        let break_settings = db::get_settings(&app_handle_bg).ok();
+                        let _should_show_overlay = break_settings.as_ref().map(|s| s.overlay_enabled).unwrap_or(false) && status != "stopped";
+                        
+                        if should_show_break {
+                            if let Ok(monitors) = app_handle_bg.available_monitors() {
+                                for (i, monitor) in monitors.iter().enumerate() {
+                                    let win_label = format!("break_overlay_{}", i);
+                                    if let Some(window) = app_handle_bg.get_webview_window(&win_label) {
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    } else {
+                                        let fullscreen = break_settings.as_ref().map(|s| s.break_fullscreen).unwrap_or(true);
+                                        
+                                        // Get monitor geometry in logical pixels to handle DPI scaling correctly
+                                        let pos = monitor.position();
+                                        let size = monitor.size();
+                                        let scale = monitor.scale_factor();
+                                        let logical_x = pos.x as f64 / scale;
+                                        let logical_y = pos.y as f64 / scale;
+                                        let logical_w = size.width as f64 / scale;
+                                        let logical_h = size.height as f64 / scale;
+
+                                        let mut builder = tauri::WebviewWindowBuilder::new(
+                                            &app_handle_bg,
+                                            &win_label,
+                                            tauri::WebviewUrl::App("break_overlay.html".into()),
+                                        )
+                                        .title("Break Time - Deskrona")
+                                        .decorations(false)
+                                        .always_on_top(true)
+                                        .skip_taskbar(true);
+                                        
+                                        if fullscreen {
+                                            builder = builder
+                                                .position(logical_x, logical_y)
+                                                .inner_size(logical_w, logical_h)
+                                                .maximized(true);
+                                        } else {
+                                            let w = 800.0;
+                                            let h = 600.0;
+                                            let cx = logical_x + (logical_w - w) / 2.0;
+                                            let cy = logical_y + (logical_h - h) / 2.0;
+                                            builder = builder
+                                                .position(cx, cy)
+                                                .inner_size(w, h)
+                                                .resizable(true);
+                                        }
+                                        
+                                        if let Ok(win) = builder.build() {
+                                            let _ = win.show();
+                                            let _ = win.set_focus();
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Hide all break overlay windows if break ended
+                            for (label, window) in app_handle_bg.webview_windows() {
+                                if label.starts_with("break_overlay_") {
+                                    let is_visible = window.is_visible().unwrap_or(false);
+                                    if is_visible {
+                                        let _ = window.hide();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Pomodoro tick
                     {
                         let phase = *POMODORO_PHASE.lock().unwrap();
@@ -730,6 +838,12 @@ pub fn run() {
             cmd_pomodoro_status,
             api_config::cmd_get_api_config,
             api_config::cmd_save_api_config,
+            break_reminder::cmd_break_status,
+            break_reminder::cmd_break_postpone,
+            break_reminder::cmd_break_skip,
+            break_reminder::cmd_break_pause,
+            break_reminder::cmd_break_resume,
+            break_reminder::cmd_break_reset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

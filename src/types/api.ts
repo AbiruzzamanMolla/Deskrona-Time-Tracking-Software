@@ -27,6 +27,7 @@ export type EndpointKey =
   | 'pomodoro_start' | 'pomodoro_skip' | 'pomodoro_stop' | 'pomodoro_status'
   | 'autostart_set' | 'autostart_get'
   | 'calendar_month'
+  | 'break_status' | 'break_postpone' | 'break_skip' | 'break_pause' | 'break_resume' | 'break_reset'
   | 'reset_app';
 
 export interface ApiConfigFile {
@@ -365,6 +366,42 @@ export const ENDPOINT_GROUPS: { label: string; key: string; endpoints: ApiEndpoi
         key: 'autostart_get', label: 'Get Autostart Status', group: 'Autostart', method: 'GET',
         requestBody: '',
         responseBody: '{ "enabled": boolean }',
+      },
+    ],
+  },
+  // ── Break Reminder ───────────────────────────────────────────────
+  {
+    label: 'Break Reminder', key: 'break',
+    endpoints: [
+      {
+        key: 'break_status', label: 'Get Break Status', group: 'Break Reminder', method: 'GET',
+        requestBody: '',
+        responseBody: '{\n  "enabled": boolean,\n  "state": "idle" | "counting" | "pre_break" | "on_break" | "paused",\n  "is_long": boolean,\n  "countdown_secs": number,\n  "mini_completed": number,\n  "postpone_count": number,\n  "postpone_limit": number,\n  "current_idea": string | null\n}',
+      },
+      {
+        key: 'break_postpone', label: 'Postpone Break', group: 'Break Reminder', method: 'POST',
+        requestBody: '{}',
+        responseBody: '{\n  "enabled": boolean,\n  "state": string,\n  "is_long": boolean,\n  "countdown_secs": number,\n  "mini_completed": number,\n  "postpone_count": number,\n  "postpone_limit": number,\n  "current_idea": string | null\n}',
+      },
+      {
+        key: 'break_skip', label: 'Skip/End Break', group: 'Break Reminder', method: 'POST',
+        requestBody: '{}',
+        responseBody: '{\n  "enabled": boolean,\n  "state": string,\n  "is_long": boolean,\n  "countdown_secs": number,\n  "mini_completed": number,\n  "postpone_count": number,\n  "postpone_limit": number,\n  "current_idea": string | null\n}',
+      },
+      {
+        key: 'break_pause', label: 'Pause Breaks', group: 'Break Reminder', method: 'POST',
+        requestBody: '{\n  "duration_minutes": number\n}',
+        responseBody: '{\n  "enabled": boolean,\n  "state": string,\n  "is_long": boolean,\n  "countdown_secs": number,\n  "mini_completed": number,\n  "postpone_count": number,\n  "postpone_limit": number,\n  "current_idea": string | null\n}',
+      },
+      {
+        key: 'break_resume', label: 'Resume Breaks', group: 'Break Reminder', method: 'POST',
+        requestBody: '{}',
+        responseBody: '{\n  "enabled": boolean,\n  "state": string,\n  "is_long": boolean,\n  "countdown_secs": number,\n  "mini_completed": number,\n  "postpone_count": number,\n  "postpone_limit": number,\n  "current_idea": string | null\n}',
+      },
+      {
+        key: 'break_reset', label: 'Reset Break Cycle', group: 'Break Reminder', method: 'POST',
+        requestBody: '{}',
+        responseBody: '{\n  "enabled": boolean,\n  "state": string,\n  "is_long": boolean,\n  "countdown_secs": number,\n  "mini_completed": number,\n  "postpone_count": number,\n  "postpone_limit": number,\n  "current_idea": string | null\n}',
       },
     ],
   },

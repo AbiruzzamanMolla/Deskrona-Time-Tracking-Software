@@ -71,6 +71,17 @@ interface Settings {
   pomodoro_sessions_before_long?: number;
   pomodoro_auto_start?: boolean;
   pomodoro_sound_enabled?: boolean;
+  break_reminder_enabled?: boolean;
+  break_mini_interval_minutes?: number;
+  break_mini_duration_seconds?: number;
+  break_long_duration_seconds?: number;
+  break_mini_breaks_before_long?: number;
+  break_postpone_limit?: number;
+  break_postpone_duration_minutes?: number;
+  break_pre_notification_seconds?: number;
+  break_sound_volume?: number;
+  break_ideas_enabled?: boolean;
+  break_fullscreen?: boolean;
 }
 
 interface Session {
@@ -175,6 +186,17 @@ const settings = ref<Settings>({
   idle_threshold: 5,
   idle_monitor_mouse: true,
   idle_monitor_keyboard: true,
+  break_reminder_enabled: false,
+  break_mini_interval_minutes: 20,
+  break_mini_duration_seconds: 20,
+  break_long_duration_seconds: 300,
+  break_mini_breaks_before_long: 4,
+  break_postpone_limit: 3,
+  break_postpone_duration_minutes: 2,
+  break_pre_notification_seconds: 10,
+  break_sound_volume: 50,
+  break_ideas_enabled: true,
+  break_fullscreen: true,
 });
 
 const apiConfig = ref<ApiConfigFile>({
@@ -228,6 +250,62 @@ let overlayInterval: any = null;
 
 // Settings tab
 const settingsTab = ref("general");
+
+// Break Reminder state
+interface BreakReminderState {
+  enabled: boolean;
+  state: string;
+  is_long: boolean;
+  countdown_secs: number;
+  mini_completed: number;
+  postpone_count: number;
+  postpone_limit: number;
+  current_idea: string | null;
+}
+const breakState = ref<BreakReminderState>({
+  enabled: false,
+  state: 'idle',
+  is_long: false,
+  countdown_secs: 0,
+  mini_completed: 0,
+  postpone_count: 0,
+  postpone_limit: 3,
+  current_idea: null
+});
+const breakCountdownFormatted = computed(() => {
+  const s = breakState.value.countdown_secs;
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+});
+const syncBreakState = async () => {
+  try {
+    breakState.value = await invoke('cmd_break_status') as BreakReminderState;
+  } catch {}
+};
+const breakPause = async (m: number) => {
+  try {
+    await invoke('cmd_break_pause', { durationMinutes: m });
+    await syncBreakState();
+  } catch (e) {
+    console.error(e);
+  }
+};
+const breakResume = async () => {
+  try {
+    await invoke('cmd_break_resume');
+    await syncBreakState();
+  } catch (e) {
+    console.error(e);
+  }
+};
+const breakReset = async () => {
+  try {
+    await invoke('cmd_break_reset');
+    await syncBreakState();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
 
 // Pomodoro state
 const pomodoroPhase = ref("idle");
@@ -778,18 +856,19 @@ const saveOverlaySettings = async () => {
 const loadApiConfigFromDisk = async () => {
   try {
     apiConfig.value = await loadApiConfig();
-    // If endpoints are empty, initialize with defaults
-    if (Object.keys(apiConfig.value.endpoints).length === 0) {
-      for (const group of ENDPOINT_GROUPS) {
-        for (const ep of group.endpoints) {
-          if (!apiConfig.value.endpoints[ep.key]) {
-            (apiConfig.value.endpoints as any)[ep.key] = {
-              enabled: false,
-              method: ep.method,
-              url: '',
-              headers: { 'Content-Type': 'application/json' },
-            };
-          }
+    // Safely backfill any missing endpoint configurations
+    if (!apiConfig.value.endpoints) {
+      apiConfig.value.endpoints = {} as any;
+    }
+    for (const group of ENDPOINT_GROUPS) {
+      for (const ep of group.endpoints) {
+        if (!apiConfig.value.endpoints[ep.key]) {
+          (apiConfig.value.endpoints as any)[ep.key] = {
+            enabled: false,
+            method: ep.method as any,
+            url: '',
+            headers: { 'Content-Type': 'application/json' },
+          };
         }
       }
     }
@@ -947,9 +1026,6 @@ const refreshDashboard = async () => {
     const data = await proxyGetDashboardData() as DashboardData;
     dashboardData.value = data;
     // Sync the local timer with backend data
-    if (data.total_active_seconds !== undefined) {
-      activeSessionSeconds.value = data.total_active_seconds;
-    }
   } catch (e) {
     console.error("Failed to refresh dashboard:", e);
   }
@@ -1159,7 +1235,14 @@ const initApp = async () => {
   await loadActiveSession();
   await loadTrackingStatus();
   await syncPomodoro();
+  await syncBreakState();
   await listen<string>("pomodoro-phase-changed", () => syncPomodoro());
+  await listen<string>("break-started", () => syncBreakState());
+  await listen<string>("break-finished", () => syncBreakState());
+  await listen<string>("break-postponed", () => syncBreakState());
+  await listen<string>("break-paused", () => syncBreakState());
+  await listen<string>("break-resumed", () => syncBreakState());
+  await listen<string>("break-pre-notification", () => syncBreakState());
   
   // Force multiple refreshes to ensure sync
   // Try to get initial data multiple times in case of DB lock or slow start
@@ -1176,8 +1259,12 @@ const initApp = async () => {
   
   refreshInterval = (setInterval(async () => {
     await refreshDashboard();
+    await syncBreakState();
   }, 5000) as unknown) as number;
   taskbarInterval = (setInterval(() => {
+    if (breakState.value && breakState.value.state !== 'idle' && breakState.value.state !== 'paused' && breakState.value.countdown_secs > 0) {
+      breakState.value.countdown_secs--;
+    }
     const hours = Math.floor(activeSessionSeconds.value / 3600);
     const mins = Math.floor((activeSessionSeconds.value % 3600) / 60);
     const secs = activeSessionSeconds.value % 60;
@@ -1884,6 +1971,24 @@ const doChangeMode = async () => {
         </div>
         <div v-else class="session-inactive">
           <button class="btn-start" @click="startPomodoro">▶ {{ t("message.pomodoroStart") }}</button>
+        </div>
+      </div>
+
+      <!-- Break Reminder Status -->
+      <div v-if="settings.break_reminder_enabled" class="session-control" style="border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px;">
+        <div style="display: flex; align-items: center; gap: 6px; padding: 4px 0;">
+          <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">{{ t("message.breakReminder") }}</span>
+          <span v-if="breakState.state === 'counting'" style="font-size: 0.7rem; color: var(--success);">⏱ {{ breakCountdownFormatted }}</span>
+          <span v-else-if="breakState.state === 'on_break'" style="font-size: 0.7rem; color: #f59e0b;">🧘 {{ t("message.breakOnBreak") }}</span>
+          <span v-else-if="breakState.state === 'pre_break'" style="font-size: 0.7rem; color: #ef4444;">⚠ {{ t("message.breakPreBreak") }}</span>
+          <span v-else-if="breakState.state === 'paused'" style="font-size: 0.7rem; color: var(--text-muted);">⏸ {{ t("message.breakPaused") }}</span>
+          <span v-else style="font-size: 0.7rem; color: var(--text-muted);">○ {{ t("message.breakIdle") }}</span>
+        </div>
+        <div style="font-size: 0.65rem; color: var(--text-muted);">{{ breakState.mini_completed }}/{{ settings.break_mini_breaks_before_long || 4 }} {{ t("message.miniBreaksDone") }}</div>
+        <div class="tracking-buttons" style="margin-top: 6px;">
+          <button v-if="breakState.state === 'paused'" class="btn-tracking btn-resume" @click="breakResume">▶ {{ t("message.breakResume") }}</button>
+          <button v-else-if="breakState.state !== 'idle'" class="btn-tracking btn-pause" @click="breakPause(30)">⏸ {{ t("message.breakPause") }}</button>
+          <button v-if="breakState.state !== 'idle' && breakState.state !== 'paused'" class="btn-tracking btn-stop-track" @click="breakReset">🔄 {{ t("message.breakReset") }}</button>
         </div>
       </div>
 
@@ -2691,6 +2796,7 @@ const doChangeMode = async () => {
             <button :class="['tab-btn', { active: settingsTab === 'storage' }]" @click="settingsTab = 'storage'">📁 {{ t("message.storage") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'overlay' }]" @click="settingsTab = 'overlay'">🪟 {{ t("message.overlay") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'pomodoro' }]" @click="settingsTab = 'pomodoro'">🍅 {{ t("message.pomodoro") }}</button>
+            <button :class="['tab-btn', { active: settingsTab === 'break' }]" @click="settingsTab = 'break'">🧘 {{ t("message.breakReminder") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'about' }]" @click="settingsTab = 'about'">ℹ️ About</button>
             <button :class="['tab-btn', { active: settingsTab === 'api' }]" @click="settingsTab = 'api'">📡 API Config</button>
           </div>
@@ -2729,7 +2835,10 @@ const doChangeMode = async () => {
               <div class="card setting-card">
                 <label>{{ t("message.autoStart") }}</label>
                 <div class="checkbox-row">
-                  <input type="checkbox" v-model="settings.auto_start_on_boot" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.auto_start_on_boot" />
+                    <span class="slider"></span>
+                  </label>
                   <span>{{ settings.auto_start_on_boot ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
@@ -2779,21 +2888,30 @@ const doChangeMode = async () => {
               <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
                 <label>{{ t("message.screenshotStatus") }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.is_screenshot_enabled" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.is_screenshot_enabled" :disabled="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" />
+                    <span class="slider"></span>
+                  </label>
                   <span :style="{ color: settings.is_screenshot_enabled ? 'var(--success)' : 'var(--danger)' }">{{ settings.is_screenshot_enabled ? t("message.active") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
                 <label>{{ t("message.idleMonitorMouse") || "Monitor Mouse" }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.idle_monitor_mouse" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.idle_monitor_mouse" />
+                    <span class="slider"></span>
+                  </label>
                   <span>{{ settings.idle_monitor_mouse ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card" :class="{ 'card-disabled': appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin' }">
                 <label>{{ t("message.idleMonitorKeyboard") || "Monitor Keyboard" }} <span v-if="appConfig?.mode === 'multi_user' && currentUser?.role !== 'admin'" class="lock-icon">🔒</span></label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.idle_monitor_keyboard" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.idle_monitor_keyboard" />
+                    <span class="slider"></span>
+                  </label>
                   <span>{{ settings.idle_monitor_keyboard ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
@@ -2837,21 +2955,30 @@ const doChangeMode = async () => {
               <div class="card setting-card">
                 <label>{{ t("message.enableOverlay") }}</label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="overlayEnabled" @change="saveOverlaySettings" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="overlayEnabled" @change="saveOverlaySettings" />
+                    <span class="slider"></span>
+                  </label>
                   <span :style="{ color: overlayEnabled ? 'var(--success)' : 'var(--danger)' }">{{ overlayEnabled ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card" :class="{ 'card-disabled': !overlayEnabled }">
                 <label>{{ t("message.alwaysOnTop") }}</label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="overlayAlwaysOnTop" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="overlayAlwaysOnTop" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
+                    <span class="slider"></span>
+                  </label>
                   <span :style="{ color: overlayAlwaysOnTop ? 'var(--success)' : 'var(--text-muted)' }">{{ overlayAlwaysOnTop ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card" :class="{ 'card-disabled': !overlayEnabled }">
                 <label>{{ t("message.clickThrough") }}</label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="overlayClickThrough" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="overlayClickThrough" :disabled="!overlayEnabled" @change="saveOverlaySettings" />
+                    <span class="slider"></span>
+                  </label>
                   <small class="setting-desc">{{ t("message.clickThroughDesc") }}</small>
                 </div>
               </div>
@@ -2884,16 +3011,108 @@ const doChangeMode = async () => {
               <div class="card setting-card">
                 <label>{{ t("message.pomodoroAutoStart") || "Auto-start with tracking" }}</label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.pomodoro_auto_start" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.pomodoro_auto_start" />
+                    <span class="slider"></span>
+                  </label>
                   <span :style="{ color: settings.pomodoro_auto_start ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.pomodoro_auto_start ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
               </div>
               <div class="card setting-card">
                 <label>{{ t("message.pomodoroSound") || "Pomodoro Sound" }}</label>
                 <div class="status-toggle">
-                  <input type="checkbox" v-model="settings.pomodoro_sound_enabled" />
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.pomodoro_sound_enabled" />
+                    <span class="slider"></span>
+                  </label>
                   <span :style="{ color: settings.pomodoro_sound_enabled ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.pomodoro_sound_enabled ? t("message.enabled") : t("message.disabled") }}</span>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Break Reminder Tab -->
+          <section v-if="settingsTab === 'break'" class="settings-section">
+            <h2 class="section-title">🧘 {{ t("message.breakReminder") }}</h2>
+            <div class="settings-grid">
+              <div class="card setting-card">
+                <label>{{ t("message.enableBreakReminder") }}</label>
+                <div class="status-toggle">
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.break_reminder_enabled" />
+                    <span class="slider"></span>
+                  </label>
+                  <span :style="{ color: settings.break_reminder_enabled ? 'var(--success)' : 'var(--danger)' }">{{ settings.break_reminder_enabled ? t("message.enabled") : t("message.disabled") }}</span>
+                </div>
+                <small class="setting-desc">{{ t("message.breakReminderDesc") }}</small>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.miniBreakInterval") }}</label>
+                <input type="number" v-model.number="settings.break_mini_interval_minutes" min="1" :disabled="!settings.break_reminder_enabled" />
+                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.miniBreakDuration") }}</label>
+                <input type="number" v-model.number="settings.break_mini_duration_seconds" min="5" :disabled="!settings.break_reminder_enabled" />
+                <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.longBreakDuration") }}</label>
+                <input type="number" v-model.number="settings.break_long_duration_seconds" min="10" :disabled="!settings.break_reminder_enabled" />
+                <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.miniBreaksBeforeLong") }}</label>
+                <input type="number" v-model.number="settings.break_mini_breaks_before_long" min="1" :disabled="!settings.break_reminder_enabled" />
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.breakPostponeLimit") }}</label>
+                <input type="number" v-model.number="settings.break_postpone_limit" min="0" :disabled="!settings.break_reminder_enabled" />
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.breakPostponeDuration") }}</label>
+                <input type="number" v-model.number="settings.break_postpone_duration_minutes" min="1" :disabled="!settings.break_reminder_enabled" />
+                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.breakPreNotification") }}</label>
+                <input type="number" v-model.number="settings.break_pre_notification_seconds" min="1" :disabled="!settings.break_reminder_enabled" />
+                <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.breakSoundVolume") }} ({{ settings.break_sound_volume }}%)</label>
+                <input type="range" v-model.number="settings.break_sound_volume" min="0" max="100" style="width:100%;" :disabled="!settings.break_reminder_enabled" />
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.breakIdeasEnabled") }}</label>
+                <div class="status-toggle">
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.break_ideas_enabled" :disabled="!settings.break_reminder_enabled" />
+                    <span class="slider"></span>
+                  </label>
+                  <span :style="{ color: settings.break_ideas_enabled ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.break_ideas_enabled ? t("message.enabled") : t("message.disabled") }}</span>
+                </div>
+              </div>
+
+              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                <label>{{ t("message.breakFullscreen") }}</label>
+                <div class="status-toggle">
+                  <label class="switch">
+                    <input type="checkbox" v-model="settings.break_fullscreen" :disabled="!settings.break_reminder_enabled" />
+                    <span class="slider"></span>
+                  </label>
+                  <span :style="{ color: settings.break_fullscreen ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.break_fullscreen ? t("message.enabled") : t("message.disabled") }}</span>
+                </div>
+                <small class="setting-desc">{{ t("message.breakFullscreenDesc") }}</small>
               </div>
             </div>
           </section>
@@ -4540,6 +4759,66 @@ input[type="number"]:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+/* The switch - the box around the slider */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* Hide default HTML checkbox */
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+/* The slider */
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-color);
+  transition: .3s ease;
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #fff;
+  transition: .3s ease;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+input:checked + .slider {
+  background-color: var(--accent);
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px var(--accent);
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+/* Disabled state styling */
+input:disabled + .slider {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 input[type="checkbox"] {
