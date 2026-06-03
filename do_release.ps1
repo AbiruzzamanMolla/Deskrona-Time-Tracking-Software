@@ -43,6 +43,8 @@ if ($status) {
 
 # 4. Handle Tags
 Write-Host "Tagging..." -ForegroundColor Yellow
+$OldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 # Delete local tag if exists
 if (git tag -l "v$VERSION") {
     Write-Host "Deleting existing local tag v$VERSION" -ForegroundColor Gray
@@ -54,6 +56,7 @@ git push origin ":refs/tags/v$VERSION" 2>$null
 
 git tag -a "v$VERSION" -m "Release v$VERSION"
 git push origin "v$VERSION"
+$ErrorActionPreference = $OldEAP
 
 # 5. Build 64-bit
 Write-Host "Building 64-bit..." -ForegroundColor Yellow
@@ -68,11 +71,10 @@ cmd /c npm run tauri build -- --target i686-pc-windows-msvc
 # 7. GitHub Release
 Write-Host "Creating GitHub Release..." -ForegroundColor Yellow
 # Delete existing release if it exists
-try { 
-    gh release delete "v$VERSION" --yes 2>$null 
-} catch {
-    Write-Host "No existing release to delete." -ForegroundColor Gray
-}
+$OldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+gh release delete "v$VERSION" --yes 2>$null
+$ErrorActionPreference = $OldEAP
 
 # Locate assets using globs
 $assets = @()
