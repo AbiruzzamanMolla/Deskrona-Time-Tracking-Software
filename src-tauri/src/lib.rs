@@ -632,10 +632,18 @@ pub fn run() {
                                 }
                             } else {
                                 // Create overlay window
+                                let url = match &app_handle_bg.config().build.dev_url {
+                                    Some(dev_url) => {
+                                        let target_url = dev_url.join("overlay.html").unwrap();
+                                        tauri::WebviewUrl::External(target_url)
+                                    }
+                                    None => tauri::WebviewUrl::App("overlay.html".into()),
+                                };
+
                                 if let Ok(ref win) = tauri::WebviewWindowBuilder::new(
                                     &app_handle_bg,
                                     "overlay",
-                                    tauri::WebviewUrl::App("overlay.html".into())
+                                    url
                                 )
                                 .title("Deskrona Overlay")
                                 .decorations(false)
@@ -686,7 +694,7 @@ pub fn run() {
                     // Break overlay window management
                     {
                         let break_st = crate::break_reminder::get_break_state(&app_handle_bg);
-                        let should_show_break = break_st.state == "on_break" || break_st.state == "pre_break";
+                        let should_show_break = break_st.state == "on_break";
                         let break_settings = db::get_settings(&app_handle_bg).ok();
                         let _should_show_overlay = break_settings.as_ref().map(|s| s.overlay_enabled).unwrap_or(false) && status != "stopped";
                         
@@ -709,10 +717,18 @@ pub fn run() {
                                         let logical_w = size.width as f64 / scale;
                                         let logical_h = size.height as f64 / scale;
 
+                                        let url = match &app_handle_bg.config().build.dev_url {
+                                            Some(dev_url) => {
+                                                let target_url = dev_url.join("break_overlay.html").unwrap();
+                                                tauri::WebviewUrl::External(target_url)
+                                            }
+                                            None => tauri::WebviewUrl::App("break_overlay.html".into()),
+                                        };
+
                                         let mut builder = tauri::WebviewWindowBuilder::new(
                                             &app_handle_bg,
                                             &win_label,
-                                            tauri::WebviewUrl::App("break_overlay.html".into()),
+                                            url,
                                         )
                                         .title("Break Time - Deskrona")
                                         .decorations(false)
@@ -847,6 +863,7 @@ pub fn run() {
             api_config::cmd_get_api_config,
             api_config::cmd_save_api_config,
             break_reminder::cmd_break_status,
+            break_reminder::cmd_break_test_preview,
             break_reminder::cmd_break_postpone,
             break_reminder::cmd_break_skip,
             break_reminder::cmd_break_pause,

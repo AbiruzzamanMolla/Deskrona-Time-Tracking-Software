@@ -175,6 +175,10 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
         ("break_sound_volume", "ALTER TABLE settings ADD COLUMN break_sound_volume INTEGER NOT NULL DEFAULT 50"),
         ("break_ideas_enabled", "ALTER TABLE settings ADD COLUMN break_ideas_enabled INTEGER NOT NULL DEFAULT 1"),
         ("break_fullscreen", "ALTER TABLE settings ADD COLUMN break_fullscreen INTEGER NOT NULL DEFAULT 1"),
+        ("break_mini_enabled", "ALTER TABLE settings ADD COLUMN break_mini_enabled INTEGER NOT NULL DEFAULT 1"),
+        ("break_long_enabled", "ALTER TABLE settings ADD COLUMN break_long_enabled INTEGER NOT NULL DEFAULT 1"),
+        ("break_allow_force_exit", "ALTER TABLE settings ADD COLUMN break_allow_force_exit INTEGER NOT NULL DEFAULT 1"),
+        ("break_bg_color", "ALTER TABLE settings ADD COLUMN break_bg_color TEXT NOT NULL DEFAULT '#0f172a'"),
     ];
 
     for (col, sql) in migrations {
@@ -256,6 +260,10 @@ pub struct Settings {
     pub break_sound_volume: i32,
     pub break_ideas_enabled: bool,
     pub break_fullscreen: bool,
+    pub break_mini_enabled: bool,
+    pub break_long_enabled: bool,
+    pub break_allow_force_exit: bool,
+    pub break_bg_color: String,
 }
 
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
@@ -265,7 +273,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let user_id = crate::tracking::get_active_user_id();
     
     // Try to get settings for the active user
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1), COALESCE(break_reminder_enabled, 0), COALESCE(break_mini_interval_minutes, 20), COALESCE(break_mini_duration_seconds, 20), COALESCE(break_long_duration_seconds, 300), COALESCE(break_mini_breaks_before_long, 4), COALESCE(break_postpone_limit, 3), COALESCE(break_postpone_duration_minutes, 2), COALESCE(break_pre_notification_seconds, 10), COALESCE(break_sound_volume, 50), COALESCE(break_ideas_enabled, 1), COALESCE(break_fullscreen, 1) FROM settings WHERE user_id = ?1 LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1), COALESCE(break_reminder_enabled, 0), COALESCE(break_mini_interval_minutes, 20), COALESCE(break_mini_duration_seconds, 20), COALESCE(break_long_duration_seconds, 300), COALESCE(break_mini_breaks_before_long, 4), COALESCE(break_postpone_limit, 3), COALESCE(break_postpone_duration_minutes, 2), COALESCE(break_pre_notification_seconds, 10), COALESCE(break_sound_volume, 50), COALESCE(break_ideas_enabled, 1), COALESCE(break_fullscreen, 1), COALESCE(break_mini_enabled, 1), COALESCE(break_long_enabled, 1), COALESCE(break_allow_force_exit, 1), COALESCE(break_bg_color, '#0f172a') FROM settings WHERE user_id = ?1 LIMIT 1")?;
     
     let result = stmt.query_row(params![user_id], |row| {
         Ok(Settings {
@@ -302,6 +310,10 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             break_sound_volume: row.get(30)?,
             break_ideas_enabled: row.get::<_, i32>(31)? != 0,
             break_fullscreen: row.get::<_, i32>(32)? != 0,
+            break_mini_enabled: row.get::<_, i32>(33)? != 0,
+            break_long_enabled: row.get::<_, i32>(34)? != 0,
+            break_allow_force_exit: row.get::<_, i32>(35)? != 0,
+            break_bg_color: row.get(36)?,
         })
     });
 
@@ -355,6 +367,10 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
                 break_sound_volume: 50,
                 break_ideas_enabled: true,
                 break_fullscreen: true,
+                break_mini_enabled: true,
+                break_long_enabled: true,
+                break_allow_force_exit: true,
+                break_bg_color: "#0f172a".to_string(),
             })
         }
         Err(e) => Err(e),
@@ -401,8 +417,12 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             break_sound_volume = ?31,
             break_ideas_enabled = ?32,
             break_fullscreen = ?33,
-            updated_at = ?34 
-        WHERE user_id = ?35",
+            break_mini_enabled = ?34,
+            break_long_enabled = ?35,
+            break_allow_force_exit = ?36,
+            break_bg_color = ?37,
+            updated_at = ?38 
+        WHERE user_id = ?39",
         params![
             settings.language,
             settings.theme,
@@ -437,6 +457,10 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.break_sound_volume,
             settings.break_ideas_enabled as i32,
             settings.break_fullscreen as i32,
+            settings.break_mini_enabled as i32,
+            settings.break_long_enabled as i32,
+            settings.break_allow_force_exit as i32,
+            settings.break_bg_color,
             now,
             crate::tracking::get_active_user_id()
         ],

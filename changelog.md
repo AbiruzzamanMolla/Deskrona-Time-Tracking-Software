@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.3 — Modernized Buttons & Peace Dove Icon
+
+### 🆕 Peace Dove SVG Icon
+- Replaced the meditation emoji (`🧘`) with a beautifully crafted inline SVG representing the flying peace dove with olive branch and pink hearts.
+- Designed directly in HTML and dynamically set in the break type JS toggle, avoiding any local file asset dependencies.
+
+### 💄 Premium Modern Primary Button Style
+- Custom modernized `.btn-primary` class using system theme accent colors (`var(--accent)`).
+- Premium micro-animations for hover scaling, active state feedback, and responsive box shadow transitions.
+
+### 🐛 Layout & Break Reminder Tuning
+- Resized settings card columns to fit standard grid layouts without full-width span.
+- Modified Rust backend logic to suppress overlays during the pre-break warnings and only trigger on the active break phase.
+- Fixed notification warning timers to apply consistently to both short and long breaks.
+
 ## 0.1.2 — Stretchly Integration & UI Improvements
 
 ### 🆕 Stretchly Break Reminder System

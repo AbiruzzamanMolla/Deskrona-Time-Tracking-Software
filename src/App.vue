@@ -2,6 +2,7 @@
 // @ts-nocheck
 import { onMounted, onUnmounted, ref, watch, computed } from "vue";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -82,6 +83,10 @@ interface Settings {
   break_sound_volume?: number;
   break_ideas_enabled?: boolean;
   break_fullscreen?: boolean;
+  break_mini_enabled?: boolean;
+  break_long_enabled?: boolean;
+  break_allow_force_exit?: boolean;
+  break_bg_color?: string;
 }
 
 interface Session {
@@ -197,6 +202,10 @@ const settings = ref<Settings>({
   break_sound_volume: 50,
   break_ideas_enabled: true,
   break_fullscreen: true,
+  break_mini_enabled: true,
+  break_long_enabled: true,
+  break_allow_force_exit: true,
+  break_bg_color: "#0f172a",
 });
 
 const apiConfig = ref<ApiConfigFile>({
@@ -311,6 +320,33 @@ const breakReset = async () => {
 const pomodoroPhase = ref("idle");
 const pomodoroRemaining = ref(0);
 const pomodoroCountToday = ref(0);
+const wellnessWidgetExpanded = ref(false);
+
+// Nav scroll arrows (mobile tab bar)
+const navRef = ref<HTMLElement | null>(null);
+const navCanScrollLeft = ref(false);
+const navCanScrollRight = ref(false);
+
+const updateNavScroll = () => {
+  const el = navRef.value;
+  if (!el) return;
+  navCanScrollLeft.value = el.scrollLeft > 2;
+  navCanScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+};
+
+const scrollNav = (dir: 'left' | 'right') => {
+  const el = navRef.value;
+  if (!el) return;
+  el.scrollBy({ left: dir === 'left' ? -120 : 120, behavior: 'smooth' });
+};
+
+onMounted(() => {
+  setTimeout(updateNavScroll, 300);
+  window.addEventListener('resize', updateNavScroll);
+});
+onUnmounted(() => {
+  window.removeEventListener('resize', updateNavScroll);
+});
 
 const pomodoroFormatted = computed(() => {
   const m = Math.floor(pomodoroRemaining.value / 60);
@@ -360,6 +396,14 @@ const hideOverlay = async () => {
     await invoke("hide_overlay_window");
   } catch (e) {
     console.error("Failed to hide overlay:", e);
+  }
+};
+
+const testBreakOverlay = async () => {
+  try {
+    await invoke('cmd_break_test_preview');
+  } catch (e) {
+    console.error('Failed to trigger test overlay', e);
   }
 };
 
@@ -614,10 +658,12 @@ const calendarGoToday = () => {
   calendarMonthNum.value = now.getMonth();
 };
 
-const selectedCalendarDay = ref<string | null>(null);
+const selectedCalendarDay = ref<string | null>(new Date().toISOString().split("T")[0]);
 
 watch([calendarYear, calendarMonthNum], () => {
-  if (currentView.value === 'calendar') loadCalendarMonth();
+  if (currentView.value === 'calendar' || (currentView.value === 'productivity' && filterType.value === 'calendar')) {
+    loadCalendarMonth();
+  }
 });
 
 const calendarMonthName = computed(() => {
@@ -688,9 +734,9 @@ const loadDayDetail = async (dateStr: string) => {
 
 const viewDayDetail = (dateStr: string) => {
   selectedCalendarDay.value = dateStr;
-  loadDayDetail(dateStr);
+  loadFilteredData(false);
 };
-const filterType = ref("daily");
+const filterType = ref("calendar");
 const customFromDate = ref(new Date().toISOString().split("T")[0]);
 const customToDate = ref(new Date().toISOString().split("T")[0]);
 
@@ -699,6 +745,14 @@ const activeSessionSeconds = computed(() => {
   const start = new Date(activeSession.value.start_time).getTime();
   const now = Date.now();
   return Math.floor((now - start) / 1000) - pausedSeconds.value;
+});
+
+const activeSessionTimeFormatted = computed(() => {
+  const totalSecs = activeSessionSeconds.value;
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  return `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 });
 
 const timeLogsList = ref<TimeLogEntry[]>([]);
@@ -1023,13 +1077,20 @@ const loadActiveSession = async () => {
 // ─── Dashboard Data ──────────────────────────────────────────────
 const refreshDashboard = async () => {
   try {
-    const localBackup = { ...dashboardData.value };
+    const isViewingToday = currentView.value === "dashboard" ||
+      (currentView.value === "productivity" && filterType.value === "calendar" && selectedCalendarDay.value === todayStr.value);
+
     const data = await proxyGetDashboardData() as DashboardData;
-    // Never let timer go backward — local counter is authoritative
-    if (data.total_active_seconds < localBackup.total_active_seconds) {
-      data.total_active_seconds = localBackup.total_active_seconds;
+
+    if (isViewingToday) {
+      const localBackup = { ...dashboardData.value };
+      // Never let timer go backward — local counter is authoritative
+      if (data.total_active_seconds < localBackup.total_active_seconds) {
+        data.total_active_seconds = localBackup.total_active_seconds;
+      }
+      dashboardData.value = data;
     }
-    dashboardData.value = data;
+
     // Sync the local timer with backend data
     if (data.total_active_seconds !== undefined) {
       activeSessionSeconds.value = data.total_active_seconds;
@@ -1107,7 +1168,10 @@ const setTracking = async (status: string) => {
 const getDateRange = () => {
   const to = new Date();
   const from = new Date();
-  if (filterType.value === "daily") {
+  if (filterType.value === "calendar") {
+    const day = selectedCalendarDay.value || new Date().toISOString().split("T")[0];
+    return { from: day, to: day };
+  } else if (filterType.value === "daily") {
     // Same day
   } else if (filterType.value === "weekly") {
     from.setDate(from.getDate() - 7);
@@ -1213,6 +1277,9 @@ watch([currentView, filterType, customFromDate, customToDate], () => {
   if (["trackings", "urls", "screenshots", "activity", "productivity"].includes(currentView.value)) {
     loadFilteredData(false);
   }
+  if (currentView.value === 'productivity' && filterType.value === 'calendar') {
+    loadCalendarMonth();
+  }
 });
 
 watch(
@@ -1245,12 +1312,32 @@ const initApp = async () => {
   await syncPomodoro();
   await syncBreakState();
   await listen<string>("pomodoro-phase-changed", () => syncPomodoro());
-  await listen<string>("break-started", () => syncBreakState());
+  await listen<string>("break-started", async (event) => {
+    await syncBreakState();
+    const allowed = await ensureNativeNotificationPermission();
+    if (allowed) {
+      const idea = event.payload || "";
+      await sendNotification({
+        title: "Break Started!",
+        body: idea ? `Idea: ${idea}` : "Time to take a break.",
+      });
+    }
+  });
   await listen<string>("break-finished", () => syncBreakState());
   await listen<string>("break-postponed", () => syncBreakState());
   await listen<string>("break-paused", () => syncBreakState());
   await listen<string>("break-resumed", () => syncBreakState());
-  await listen<string>("break-pre-notification", () => syncBreakState());
+  await listen<string>("break-pre-notification", async (event) => {
+    await syncBreakState();
+    const allowed = await ensureNativeNotificationPermission();
+    if (allowed) {
+      const idea = event.payload || "";
+      await sendNotification({
+        title: "Break Starting Soon!",
+        body: idea ? `Next break: ${idea}` : "A break is starting soon.",
+      });
+    }
+  });
   
   // Force multiple refreshes to ensure sync
   // Try to get initial data multiple times in case of DB lock or slow start
@@ -1645,7 +1732,11 @@ onMounted(async () => {
   // Real-time second counter for dashboard matching
   setInterval(() => {
     if (appScreen.value === 'app' && trackingStatus.value === 'running') {
-      dashboardData.value.total_active_seconds += 1;
+      const isViewingToday = currentView.value === "dashboard" ||
+        (currentView.value === "productivity" && filterType.value === "calendar" && selectedCalendarDay.value === todayStr.value);
+      if (isViewingToday) {
+        dashboardData.value.total_active_seconds += 1;
+      }
     }
   }, 1000);
 
@@ -1666,7 +1757,7 @@ watch(appScreen, (s) => {
 
 watch(currentView, (v) => {
   if (v === "admin") loadAdminData();
-  else if (v === "calendar") loadCalendarMonth();
+  else if (v === "calendar" || (v === "productivity" && filterType.value === "calendar")) loadCalendarMonth();
   else if (["trackings", "urls", "screenshots", "activity"].includes(v))
     loadFilteredData();
 });
@@ -1895,39 +1986,44 @@ const doChangeMode = async () => {
         <h2>Deskrona</h2>
       </div>
 
-      <!-- Navigation -->
-      <nav>
-        <button :class="{ active: currentView === 'dashboard' }" @click="currentView = 'dashboard'">
-          📊 {{ t("message.dashboard") }}
-        </button>
-        <button :class="{ active: currentView === 'trackings' }" @click="currentView = 'trackings'">
-          📋 {{ t("message.trackings") }}
-        </button>
-        <button :class="{ active: currentView === 'urls' }" @click="currentView = 'urls'">
-          🌐 {{ t("message.urls") }}
-        </button>
-        <button :class="{ active: currentView === 'activity' }" @click="currentView = 'activity'">
-          📈 {{ t("message.activity") }}
-        </button>
-        <button :class="{ active: currentView === 'screenshots' }" @click="currentView = 'screenshots'">
-          📸 {{ t("message.screenshots") }}
-        </button>
-        <button :class="{ active: currentView === 'productivity' }" @click="currentView = 'productivity'">
-          ⭐ {{ t("message.productivity") }}
-        </button>
-        <button :class="{ active: currentView === 'calendar' }" @click="currentView = 'calendar'">
-          📅 {{ t("message.calendar") }}
-        </button>
-        <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
-          ⚙️ {{ t("message.settings") }}
-        </button>
-        <button v-if="isMultiUser && currentUser?.role === 'admin'" :class="{ active: currentView === 'admin' }"
-          @click="currentView = 'admin'">
-          👑 {{ t("message.admin") }}
-        </button>
-      </nav>
+      <!-- Sidebar Body (Scrollable nav and controls) -->
+      <div class="sidebar-body">
+        <!-- Navigation -->
+        <div class="nav-scroll-wrapper">
+          <button v-if="navCanScrollLeft" class="nav-scroll-btn nav-scroll-left" @click="scrollNav('left')" aria-label="Scroll left">‹</button>
+          <nav ref="navRef" @scroll="updateNavScroll">
+            <button :class="{ active: currentView === 'dashboard' }" @click="currentView = 'dashboard'">
+              📊 {{ t("message.dashboard") }}
+            </button>
+            <button :class="{ active: currentView === 'trackings' }" @click="currentView = 'trackings'">
+              📋 {{ t("message.trackings") }}
+            </button>
+            <button :class="{ active: currentView === 'urls' }" @click="currentView = 'urls'">
+              🌐 {{ t("message.urls") }}
+            </button>
+            <button :class="{ active: currentView === 'activity' }" @click="currentView = 'activity'">
+              📈 {{ t("message.activity") }}
+            </button>
+            <button :class="{ active: currentView === 'screenshots' }" @click="currentView = 'screenshots'">
+              📸 {{ t("message.screenshots") }}
+            </button>
+            <button :class="{ active: currentView === 'productivity' }" @click="currentView = 'productivity'">
+              ⭐ {{ t("message.productivity") }}
+            </button>
+            <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
+              ⚙️ {{ t("message.settings") }}
+            </button>
+            <button v-if="isMultiUser && currentUser?.role === 'admin'" :class="{ active: currentView === 'admin' }"
+              @click="currentView = 'admin'">
+              👑 {{ t("message.admin") }}
+            </button>
+          </nav>
+          <button v-if="navCanScrollRight" class="nav-scroll-btn nav-scroll-right" @click="scrollNav('right')" aria-label="Scroll right">›</button>
+        </div>
 
-      <!-- Tracking Control -->
+      </div>
+
+      <!-- Tracking Control (pinned to bottom) -->
       <div class="tracking-control">
         <div class="tracking-status" :class="trackingStatus">
           <span v-if="trackingStatus === 'running'" class="status-dot running"></span>
@@ -1965,44 +2061,6 @@ const doChangeMode = async () => {
         </div>
       </div>
 
-      <!-- Session Control in Sidebar -->
-      <div class="session-control">
-        <div v-if="pomodoroPhase !== 'idle'" class="session-active">
-          <span class="pulse-dot"></span>
-          <span>{{ pomodoroPhase === 'focus' ? t("message.pomodoroFocus") : t("message.pomodoroBreak") }}</span>
-          <div class="pomodoro-timer">{{ pomodoroFormatted }}</div>
-          <div class="pomodoro-count">🍅 {{ pomodoroCountToday }}</div>
-          <div v-if="trackingStatus === 'running' && dashboardData.app_stats.length > 0" class="current-activity-mini">
-            <small>{{ t("message.viewing") }} {{ dashboardData.app_stats[0].app_name }}</small>
-          </div>
-          <button class="btn-stop" @click="stopPomodoro">⏹ {{ t("message.pomodoroEnd") }}</button>
-        </div>
-        <div v-else class="session-inactive">
-          <button class="btn-start" @click="startPomodoro">▶ {{ t("message.pomodoroStart") }}</button>
-        </div>
-      </div>
-
-      <!-- Break Reminder Status -->
-      <div v-if="settings.break_reminder_enabled" class="session-control" style="border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px;">
-        <div style="display: flex; align-items: center; gap: 6px; padding: 4px 0;">
-          <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">{{ t("message.breakReminder") }}</span>
-          <span v-if="breakState.state === 'counting'" style="font-size: 0.7rem; color: var(--success);">⏱ {{ breakCountdownFormatted }}</span>
-          <span v-else-if="breakState.state === 'on_break'" style="font-size: 0.7rem; color: #f59e0b;">🧘 {{ t("message.breakOnBreak") }}</span>
-          <span v-else-if="breakState.state === 'pre_break'" style="font-size: 0.7rem; color: #ef4444;">⚠ {{ t("message.breakPreBreak") }}</span>
-          <span v-else-if="breakState.state === 'paused'" style="font-size: 0.7rem; color: var(--text-muted);">⏸ {{ t("message.breakPaused") }}</span>
-          <span v-else style="font-size: 0.7rem; color: var(--text-muted);">○ {{ t("message.breakIdle") }}</span>
-        </div>
-        <div style="font-size: 0.65rem; color: var(--text-muted);">{{ breakState.mini_completed }}/{{ settings.break_mini_breaks_before_long || 4 }} {{ t("message.miniBreaksDone") }}</div>
-        <div class="tracking-buttons" style="margin-top: 6px;">
-          <button v-if="breakState.state === 'paused'" class="btn-tracking btn-resume" @click="breakResume">▶ {{ t("message.breakResume") }}</button>
-          <button v-else-if="breakState.state !== 'idle'" class="btn-tracking btn-pause" @click="breakPause(30)">⏸ {{ t("message.breakPause") }}</button>
-          <button v-if="breakState.state !== 'idle' && breakState.state !== 'paused'" class="btn-tracking btn-stop-track" @click="breakReset">🔄 {{ t("message.breakReset") }}</button>
-        </div>
-      </div>
-
-      <div style="flex: 1"></div>
-      <!-- spacer -->
-
       <!-- API Queue Status -->
       <div v-if="isOnline() && (queueStats.pending > 0 || queueStats.failed > 0)" class="api-queue-indicator">
         <div class="queue-info">
@@ -2038,6 +2096,65 @@ const doChangeMode = async () => {
         </button>
       </div>
     </aside>
+
+    <!-- Floating Wellness FAB -->
+    <div class="floating-wellness-widget">
+      <!-- Popover Panel -->
+      <div v-if="wellnessWidgetExpanded" class="wellness-popover">
+        <div class="popover-header">
+          <span class="popover-title">🧘 Wellness</span>
+          <button class="popover-close" @click="wellnessWidgetExpanded = false">×</button>
+        </div>
+
+        <!-- Focus Mode Section -->
+        <div class="popover-section">
+          <div class="popover-section-title">🍅 {{ t("message.pomodoro") || 'Focus Mode' }}</div>
+          <div v-if="pomodoroPhase !== 'idle'" class="session-active" style="gap: 4px;">
+            <span class="pulse-dot"></span>
+            <span style="font-size: 0.85rem; font-weight: 700;">{{ pomodoroPhase === 'focus' ? t("message.pomodoroFocus") : t("message.pomodoroBreak") }}</span>
+            <div class="pomodoro-timer" style="font-size: 1.4rem; font-weight: 800; color: var(--accent); margin: 4px 0;">{{ pomodoroFormatted }}</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">🍅 {{ pomodoroCountToday }}</div>
+            <button class="btn-stop" @click="stopPomodoro" style="width: 100%;">⏹ {{ t("message.pomodoroEnd") }}</button>
+          </div>
+          <div v-else>
+            <button class="btn-start" @click="startPomodoro" style="width: 100%;">▶ {{ t("message.pomodoroStart") }}</button>
+          </div>
+        </div>
+
+        <!-- Break Reminder Section -->
+        <div v-if="settings.break_reminder_enabled" class="popover-section">
+          <div class="popover-section-title">🧘 {{ t("message.breakReminder") }}</div>
+          <div class="break-fab-status">
+            <span v-if="breakState.state === 'counting'" class="fab-break-badge counting">⏱ {{ breakCountdownFormatted }}</span>
+            <span v-else-if="breakState.state === 'on_break'" class="fab-break-badge on-break">🧘 {{ t("message.breakOnBreak") }}</span>
+            <span v-else-if="breakState.state === 'pre_break'" class="fab-break-badge pre-break">⚠ {{ t("message.breakPreBreak") }}</span>
+            <span v-else-if="breakState.state === 'paused'" class="fab-break-badge paused">⏸ {{ t("message.breakPaused") }}</span>
+            <span v-else class="fab-break-badge idle">○ {{ t("message.breakIdle") }}</span>
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin: 6px 0 8px; text-align: center;">{{ breakState.mini_completed }}/{{ settings.break_mini_breaks_before_long || 4 }} {{ t("message.miniBreaksDone") }}</div>
+          <div style="display: flex; gap: 6px;">
+            <button v-if="breakState.state === 'paused'" class="btn-tracking btn-resume" style="flex: 1; padding: 6px;" @click="breakResume">▶ {{ t("message.breakResume") }}</button>
+            <button v-else-if="breakState.state !== 'idle'" class="btn-tracking btn-pause" style="flex: 1; padding: 6px;" @click="breakPause(30)">⏸ {{ t("message.breakPause") }}</button>
+            <button v-if="breakState.state !== 'idle' && breakState.state !== 'paused'" class="btn-tracking btn-stop-track" style="flex: 1; padding: 6px;" @click="breakReset">🔄 {{ t("message.breakReset") }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FAB Button -->
+      <button class="wellness-fab" @click="wellnessWidgetExpanded = !wellnessWidgetExpanded">
+        <span class="fab-icon">
+          <template v-if="pomodoroPhase !== 'idle'">🍅</template>
+          <template v-else-if="breakState.state === 'on_break'">🧘</template>
+          <template v-else>💆</template>
+        </span>
+        <span class="fab-text">
+          <template v-if="pomodoroPhase !== 'idle'">{{ pomodoroFormatted }}</template>
+          <template v-else-if="breakState.state === 'counting'">⏱ {{ breakCountdownFormatted }}</template>
+          <template v-else-if="breakState.state === 'on_break'">{{ t("message.breakOnBreak") }}</template>
+          <template v-else>Wellness</template>
+        </span>
+      </button>
+    </div>
 
     <main class="main-content">
       <!-- DASHBOARD VIEW -->
@@ -2493,31 +2610,62 @@ const doChangeMode = async () => {
         </div>
       </div>
 
-      <!-- CALENDAR VIEW -->
-      <div v-if="currentView === 'calendar'" class="view-calendar">
-        <header class="view-header">
-          <h1>📅 {{ t("message.calendar") }}</h1>
+      <!-- PRODUCTIVITY VIEW -->
+      <div v-if="currentView === 'productivity'" class="view-productivity">
+        <header class="view-header productivity-header-deck">
+          <div class="header-titles">
+            <h1 class="view-title">{{ t("message.productivity") }}</h1>
+            <p class="view-subtitle" v-if="filterType === 'calendar' && selectedCalendarDay">
+              {{ t("message.calendar") }} (Single Day) &mdash; <span class="selected-date-highlight">{{ selectedCalendarDay }}</span>
+            </p>
+            <p class="view-subtitle" v-else-if="filterType === 'custom'">
+              Custom Range &mdash; <span class="selected-date-highlight">{{ customFromDate }} to {{ customToDate }}</span>
+            </p>
+            <p class="view-subtitle" v-else>
+              Range Mode &mdash; <span class="selected-date-highlight">{{ t("message.filter" + filterType.charAt(0).toUpperCase() + filterType.slice(1)) }}</span>
+            </p>
+          </div>
           <div class="filter-controls">
-            <button class="btn-browse" @click="calendarGoToday">
-              🎯 {{ t("message.calendarToday") }}
-            </button>
-            <button class="btn-browse" @click="calendarPrevMonth">◀</button>
-            <strong style="min-width: 180px; text-align: center;">{{ calendarMonthName }}</strong>
-            <button class="btn-browse" @click="calendarNextMonth">▶</button>
-            <button class="btn-browse" @click="loadCalendarMonth">
+            <button class="btn-browse" @click="loadFilteredData(false)">
               🔄 {{ t("message.refresh") }}
             </button>
+            <select v-model="filterType" class="modern-select">
+              <option value="calendar">📅 {{ t("message.calendar") }} (Single Day)</option>
+              <option value="daily">{{ t("message.filterDaily") }}</option>
+              <option value="weekly">{{ t("message.filterWeekly") }}</option>
+              <option value="monthly">{{ t("message.filterMonthly") }}</option>
+              <option value="yearly">{{ t("message.filterYearly") }}</option>
+              <option value="custom">{{ t("message.filterCustom") }}</option>
+            </select>
+            <template v-if="filterType === 'custom'">
+              <div class="date-picker-group">
+                <input type="date" v-model="customFromDate" class="modern-date-input" />
+                <span class="date-sep">-</span>
+                <input type="date" v-model="customToDate" class="modern-date-input" />
+              </div>
+            </template>
           </div>
         </header>
 
-        <div class="calendar-layout">
-          <!-- Calendar Grid -->
-          <div class="card calendar-card">
+        <div class="calendar-productivity-layout" :class="{ 'has-calendar': filterType === 'calendar' }">
+          <!-- Calendar Sidebar Column -->
+          <div v-if="filterType === 'calendar'" class="card calendar-sidebar-card">
+            <div class="calendar-sidebar-header">
+              <button class="btn-browse btn-small btn-today" @click="calendarGoToday">
+                🎯 {{ t("message.calendarToday") }}
+              </button>
+              <div class="month-selector">
+                <button class="btn-nav" @click="calendarPrevMonth">◀</button>
+                <span class="current-month">{{ calendarMonthName }}</span>
+                <button class="btn-nav" @click="calendarNextMonth">▶</button>
+              </div>
+            </div>
+
             <div v-if="calendarLoading" class="empty-state" style="border: none;">
               <p>{{ t("message.loading") }}</p>
             </div>
             <template v-else>
-              <div class="calendar-weekdays">
+              <div class="calendar-weekdays-container">
                 <span>{{ t("message.calendarMon") }}</span>
                 <span>{{ t("message.calendarTue") }}</span>
                 <span>{{ t("message.calendarWed") }}</span>
@@ -2526,7 +2674,7 @@ const doChangeMode = async () => {
                 <span>{{ t("message.calendarSat") }}</span>
                 <span>{{ t("message.calendarSun") }}</span>
               </div>
-              <div class="calendar-grid">
+              <div class="calendar-grid-container">
                 <div v-for="(cell, idx) in calendarDaysInMonth" :key="idx"
                   :class="[
                     'calendar-cell',
@@ -2550,245 +2698,113 @@ const doChangeMode = async () => {
             </template>
           </div>
 
-          <!-- Day Detail Sidebar -->
-          <div v-if="selectedCalendarDay" class="card calendar-detail-card">
-            <h3>{{ selectedCalendarDay }}</h3>
-            <div v-if="calendarDayLoadingDetail" class="empty-state" style="border: none; padding: 20px;">
-              <p>{{ t("message.loading") }}</p>
-            </div>
-            <template v-else>
-              <div v-if="selectedCalendarDayData" class="calendar-detail-stats">
-                <div class="detail-stat">
-                  <span class="detail-stat-label">{{ t("message.calendarTotal") }}</span>
-                  <span class="detail-stat-value">{{ formatTime(selectedCalendarDayData.total_seconds) }}</span>
+          <!-- Productivity Content Column -->
+          <div class="productivity-main-column">
+            <div class="activity-summary-row">
+              <div class="card activity-stat-card total-time-card">
+                <div class="stat-icon-wrapper">
+                  <div class="stat-icon">⏱</div>
                 </div>
-                <div class="detail-stat">
-                  <span class="detail-stat-label">{{ t("message.calendarApps") }}</span>
-                  <span class="detail-stat-value">{{ selectedCalendarDayData.app_count }}</span>
-                </div>
-                <div class="detail-stat">
-                  <span class="detail-stat-label">{{ t("message.calendarScreenshots") }}</span>
-                  <span class="detail-stat-value">
-                    <span v-if="selectedCalendarDayData.has_screenshots" style="color: var(--success)">✅ {{ t("message.enabled") }}</span>
-                    <span v-else style="color: var(--text-muted)">—</span>
-                  </span>
-                </div>
-                <div class="detail-stat">
-                  <span class="detail-stat-label">⌨️ {{ t("message.keyboard") }}</span>
-                  <span class="detail-stat-value">{{ calendarDayInputStats.keyboard_count.toLocaleString() }}</span>
-                </div>
-                <div class="detail-stat">
-                  <span class="detail-stat-label">🖱 {{ t("message.mouse") }}</span>
-                  <span class="detail-stat-value">{{ calendarDayInputStats.mouse_count.toLocaleString() }}</span>
+                <div class="stat-info">
+                  <div class="stat-label">
+                    {{ t("message.totalTime") || "Total Time" }}
+                  </div>
+                  <div class="stat-value">
+                    {{ formatTime(dashboardData.total_active_seconds + dashboardData.total_idle_seconds) }}
+                  </div>
                 </div>
               </div>
-              <div v-else class="empty-state" style="border: none; padding: 20px;">
-                <p>{{ t("message.calendarNoData") }}</p>
+              
+              <div class="card activity-stat-card active-time-card">
+                <div class="stat-icon-wrapper">
+                  <div class="stat-icon">▶</div>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">
+                    {{ t("message.activeTime") }}
+                  </div>
+                  <div class="stat-value">
+                    {{ formatTime(dashboardData.total_active_seconds) }}
+                  </div>
+                </div>
               </div>
 
-              <!-- Top Apps for the day -->
-              <div v-if="calendarDayApps.length > 0" class="calendar-day-apps">
-                <h4 style="margin: 16px 0 8px; font-size: 0.85rem; color: var(--text-muted);">{{ t("message.topApps") }}</h4>
-                <div v-for="app in calendarDayApps.slice(0, 10)" :key="app.app_name" class="detail-app-row">
-                  <span class="app-name" style="font-size: 0.82rem;">
-                    <span class="app-icon">{{ appIcon(app.app_name) }}</span>
-                    {{ app.app_name }}
-                  </span>
-                  <span class="detail-app-time">{{ formatTime(app.total_seconds) }}</span>
+              <div class="card activity-stat-card idle-time-card">
+                <div class="stat-icon-wrapper">
+                  <div class="stat-icon">⏸</div>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">
+                    {{ t("message.idleTime") }}
+                  </div>
+                  <div class="stat-value">
+                    {{ formatTime(dashboardData.total_idle_seconds) }}
+                  </div>
                 </div>
               </div>
-            </template>
-          </div>
-          <div v-else class="card calendar-detail-card calendar-detail-empty">
-            <p>{{ t("message.calendarClickDay") }}</p>
-          </div>
-        </div>
-      </div>
 
-      <!-- PRODUCTIVITY VIEW -->
-      <div v-if="currentView === 'productivity'" class="view-productivity">
-        <header class="view-header">
-          <h1>{{ t("message.productivity") }}</h1>
-          <div class="filter-controls">
-            <button class="btn-browse" @click="loadFilteredData(false)">
-              🔄 {{ t("message.refresh") }}
-            </button>
-            <select v-model="filterType">
-              <option value="daily">{{ t("message.filterDaily") }}</option>
-              <option value="weekly">{{ t("message.filterWeekly") }}</option>
-              <option value="monthly">{{ t("message.filterMonthly") }}</option>
-              <option value="yearly">{{ t("message.filterYearly") }}</option>
-              <option value="custom">{{ t("message.filterCustom") }}</option>
-            </select>
-            <template v-if="filterType === 'custom'">
-              <input type="date" v-model="customFromDate" />
-              <span> - </span>
-              <input type="date" v-model="customToDate" />
-            </template>
-          </div>
-        </header>
+              <div class="card activity-stat-card keyboard-card">
+                <div class="stat-icon-wrapper">
+                  <div class="stat-icon">⌨️</div>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">
+                    {{ t("message.keyboardActivity") }}
+                  </div>
+                  <div class="stat-value">
+                    {{ dashboardData.keyboard_count }}
+                    <span class="stat-unit">{{ t("message.events") }}</span>
+                  </div>
+                </div>
+              </div>
 
-        <div class="activity-summary-row">
-          <div class="card activity-stat-card"
-            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
-            <div class="stat-icon" style="
-                background: rgba(95, 139, 184, 0.2);
-                color: var(--accent);
-                width: 48px;
-                height: 48px;
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 1.5rem;
-              ">
-              ⏱
-            </div>
-            <div>
-              <div style="font-size: 0.9rem; color: var(--text-muted)">
-                {{ t("message.totalTime") || "Total Time" }}
-              </div>
-              <div style="font-size: 1.5rem; font-weight: 700">
-                {{ formatTime(dashboardData.total_active_seconds + dashboardData.total_idle_seconds) }}
+              <div class="card activity-stat-card mouse-card">
+                <div class="stat-icon-wrapper">
+                  <div class="stat-icon">🖱️</div>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">
+                    {{ t("message.mouseActivity") }}
+                  </div>
+                  <div class="stat-value">
+                    {{ dashboardData.mouse_count }}
+                    <span class="stat-unit">{{ t("message.events") }}</span>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="card activity-stat-card"
-            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
-            <div class="stat-icon" style="
-                background: rgba(76, 175, 80, 0.2);
-                color: var(--success);
-                width: 48px;
-                height: 48px;
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 1.5rem;
-              ">
-              ▶
-            </div>
-            <div>
-              <div style="font-size: 0.9rem; color: var(--text-muted)">
-                {{ t("message.activeTime") }}
-              </div>
-              <div style="font-size: 1.5rem; font-weight: 700">
-                {{ formatTime(dashboardData.total_active_seconds) }}
-              </div>
-            </div>
-          </div>
-          <div class="card activity-stat-card"
-            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
-            <div class="stat-icon" style="
-                background: rgba(244, 67, 54, 0.2);
-                color: var(--danger);
-                width: 48px;
-                height: 48px;
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 1.5rem;
-              ">
-              ⏸
-            </div>
-            <div>
-              <div style="font-size: 0.9rem; color: var(--text-muted)">
-                {{ t("message.idleTime") }}
-              </div>
-              <div style="font-size: 1.5rem; font-weight: 700">
-                {{ formatTime(dashboardData.total_idle_seconds) }}
-              </div>
-            </div>
-          </div>
-          <div class="card activity-stat-card"
-            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
-            <div class="stat-icon" style="
-                background: var(--accent-light);
-                color: var(--accent);
-                width: 48px;
-                height: 48px;
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 1.5rem;
-              ">
-              ⌨️
-            </div>
-            <div>
-              <div style="font-size: 0.9rem; color: var(--text-muted)">
-                {{ t("message.keyboardActivity") }}
-              </div>
-              <div style="font-size: 1.5rem; font-weight: 700">
-                {{ dashboardData.keyboard_count }}
-                <span style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted)">{{ t("message.events")
-                  }}</span>
-              </div>
-            </div>
-          </div>
-          <div class="card activity-stat-card"
-            style="flex: 1; display: flex; align-items: center; gap: 16px; padding: 20px">
-            <div class="stat-icon" style="
-                background: var(--success-light);
-                color: var(--success);
-                width: 48px;
-                height: 48px;
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 1.5rem;
-              ">
-              🖱️
-            </div>
-            <div>
-              <div style="font-size: 0.9rem; color: var(--text-muted)">
-                {{ t("message.mouseActivity") }}
-              </div>
-              <div style="font-size: 1.5rem; font-weight: 700">
-                {{ dashboardData.mouse_count }}
-                <span style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted)">{{ t("message.events")
-                  }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <div class="productivity-grid">
-          <div class="card chart-container" style="height: 300px">
-            <h3>{{ t("message.productivityBreakdown") }}</h3>
-            <Pie :data="productivityChartData" :options="productivityChartOptions" />
-          </div>
-
-          <div class="card">
-            <h3>{{ t("message.appCategories") }}</h3>
-            <div class="table-responsive">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{{ t("message.appName") }}</th>
-                    <th>{{ t("message.timeSpent") }}</th>
-                    <th>{{ t("message.category") }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="stat in dashboardData.app_stats" :key="stat.app_name">
-                    <td>{{ stat.app_name }}</td>
-                    <td>{{ formatTime(stat.total_seconds) }}</td>
-                    <td>
-                      <select v-model="stat.category" @change="updateCategory(stat.app_name, stat.category)"
-                        :disabled="isMultiUser && !isAdmin" :class="['category-badge-select', stat.category]">
-                        <option value="productive">{{ t("message.productive") }}</option>
-                        <option value="neutral">{{ t("message.neutral") }}</option>
-                        <option value="unproductive">
-                          {{ t("message.unproductive") }}
-                        </option>
-                      </select>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="productivity-grid single-column">
+              <div class="card category-list-card">
+                <h3 class="card-title">{{ t("message.appCategories") }}</h3>
+                <div class="table-responsive">
+                  <table class="modern-table">
+                    <thead>
+                      <tr>
+                        <th>{{ t("message.appName") }}</th>
+                        <th>{{ t("message.timeSpent") }}</th>
+                        <th>{{ t("message.category") }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="stat in dashboardData.app_stats" :key="stat.app_name">
+                        <td class="app-name-cell">{{ stat.app_name }}</td>
+                        <td class="time-spent-cell">{{ formatTime(stat.total_seconds) }}</td>
+                        <td>
+                          <select v-model="stat.category" @change="updateCategory(stat.app_name, stat.category)"
+                            :disabled="isMultiUser && !isAdmin" :class="['category-badge-select', stat.category]">
+                            <option value="productive">{{ t("message.productive") }}</option>
+                            <option value="neutral">{{ t("message.neutral") }}</option>
+                            <option value="unproductive">
+                              {{ t("message.unproductive") }}
+                            </option>
+                          </select>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -3042,85 +3058,169 @@ const doChangeMode = async () => {
           <!-- Break Reminder Tab -->
           <section v-if="settingsTab === 'break'" class="settings-section">
             <h2 class="section-title">🧘 {{ t("message.breakReminder") }}</h2>
-            <div class="settings-grid">
-              <div class="card setting-card">
-                <label>{{ t("message.enableBreakReminder") }}</label>
-                <div class="status-toggle">
-                  <label class="switch">
-                    <input type="checkbox" v-model="settings.break_reminder_enabled" />
-                    <span class="slider"></span>
-                  </label>
-                  <span :style="{ color: settings.break_reminder_enabled ? 'var(--success)' : 'var(--danger)' }">{{ settings.break_reminder_enabled ? t("message.enabled") : t("message.disabled") }}</span>
+
+            <!-- Group 1: General Settings -->
+            <div class="settings-group">
+              <h3 class="settings-group-title">General Settings</h3>
+              <div class="settings-grid">
+                <div class="card setting-card">
+                  <label>{{ t("message.enableBreakReminder") }}</label>
+                  <div class="status-toggle">
+                    <label class="switch">
+                      <input type="checkbox" v-model="settings.break_reminder_enabled" />
+                      <span class="slider"></span>
+                    </label>
+                    <span :style="{ color: settings.break_reminder_enabled ? 'var(--success)' : 'var(--danger)' }">{{ settings.break_reminder_enabled ? t("message.enabled") : t("message.disabled") }}</span>
+                  </div>
+                  <small class="setting-desc">{{ t("message.breakReminderDesc") }}</small>
                 </div>
-                <small class="setting-desc">{{ t("message.breakReminderDesc") }}</small>
-              </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.miniBreakInterval") }}</label>
-                <input type="number" v-model.number="settings.break_mini_interval_minutes" min="1" :disabled="!settings.break_reminder_enabled" />
-                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
-              </div>
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>{{ t("message.breakFullscreen") }}</label>
+                  <div class="status-toggle">
+                    <label class="switch">
+                      <input type="checkbox" v-model="settings.break_fullscreen" :disabled="!settings.break_reminder_enabled" />
+                      <span class="slider"></span>
+                    </label>
+                    <span :style="{ color: settings.break_fullscreen ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.break_fullscreen ? t("message.enabled") : t("message.disabled") }}</span>
+                  </div>
+                  <small class="setting-desc">{{ t("message.breakFullscreenDesc") }}</small>
+                </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.miniBreakDuration") }}</label>
-                <input type="number" v-model.number="settings.break_mini_duration_seconds" min="5" :disabled="!settings.break_reminder_enabled" />
-                <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
-              </div>
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>{{ t("message.breakIdeasEnabled") }}</label>
+                  <div class="status-toggle">
+                    <label class="switch">
+                      <input type="checkbox" v-model="settings.break_ideas_enabled" :disabled="!settings.break_reminder_enabled" />
+                      <span class="slider"></span>
+                    </label>
+                    <span :style="{ color: settings.break_ideas_enabled ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.break_ideas_enabled ? t("message.enabled") : t("message.disabled") }}</span>
+                  </div>
+                </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.longBreakDuration") }}</label>
-                <input type="number" v-model.number="settings.break_long_duration_seconds" min="10" :disabled="!settings.break_reminder_enabled" />
-                <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
-              </div>
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>Allow Force Exit</label>
+                  <div class="status-toggle">
+                    <label class="switch">
+                      <input type="checkbox" v-model="settings.break_allow_force_exit" :disabled="!settings.break_reminder_enabled" />
+                      <span class="slider"></span>
+                    </label>
+                    <span :style="{ color: settings.break_allow_force_exit && settings.break_reminder_enabled ? 'var(--success)' : 'var(--danger)' }">
+                      {{ settings.break_allow_force_exit && settings.break_reminder_enabled ? t("message.enabled") : t("message.disabled") }}
+                    </span>
+                  </div>
+                  <small class="setting-desc">Show End Break button on break screen to force skip breaks.</small>
+                </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.miniBreaksBeforeLong") }}</label>
-                <input type="number" v-model.number="settings.break_mini_breaks_before_long" min="1" :disabled="!settings.break_reminder_enabled" />
-              </div>
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>{{ t("message.breakSoundVolume") }} ({{ settings.break_sound_volume }}%)</label>
+                  <input type="range" v-model.number="settings.break_sound_volume" min="0" max="100" style="width:100%;" :disabled="!settings.break_reminder_enabled" />
+                </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.breakPostponeLimit") }}</label>
-                <input type="number" v-model.number="settings.break_postpone_limit" min="0" :disabled="!settings.break_reminder_enabled" />
-              </div>
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>Background Color</label>
+                  <div class="color-picker-wrapper" style="display: flex; gap: 12px; align-items: center;">
+                    <input type="color" v-model="settings.break_bg_color" :disabled="!settings.break_reminder_enabled" style="border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; height: 36px; width: 60px; padding: 0;" />
+                    <span style="font-family: monospace; font-size: 0.9rem;">{{ settings.break_bg_color }}</span>
+                  </div>
+                  <small class="setting-desc">Selected background color for the break overlay.</small>
+                </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.breakPostponeDuration") }}</label>
-                <input type="number" v-model.number="settings.break_postpone_duration_minutes" min="1" :disabled="!settings.break_reminder_enabled" />
-                <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
-              </div>
-
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.breakPreNotification") }}</label>
-                <input type="number" v-model.number="settings.break_pre_notification_seconds" min="1" :disabled="!settings.break_reminder_enabled" />
-                <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
-              </div>
-
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.breakSoundVolume") }} ({{ settings.break_sound_volume }}%)</label>
-                <input type="range" v-model.number="settings.break_sound_volume" min="0" max="100" style="width:100%;" :disabled="!settings.break_reminder_enabled" />
-              </div>
-
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.breakIdeasEnabled") }}</label>
-                <div class="status-toggle">
-                  <label class="switch">
-                    <input type="checkbox" v-model="settings.break_ideas_enabled" :disabled="!settings.break_reminder_enabled" />
-                    <span class="slider"></span>
-                  </label>
-                  <span :style="{ color: settings.break_ideas_enabled ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.break_ideas_enabled ? t("message.enabled") : t("message.disabled") }}</span>
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>{{ t("message.breakPreNotification") }}</label>
+                  <input type="number" v-model.number="settings.break_pre_notification_seconds" min="1" :disabled="!settings.break_reminder_enabled" />
+                  <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
+                </div>
+                
+                <!-- Test Preview Button -->
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>Preview Overlay</label>
+                  <button class="btn btn-primary" @click="testBreakOverlay" :disabled="!settings.break_reminder_enabled" style="margin-top: 8px; width: 100%; padding: 8px 12px; font-weight: 600;">
+                    👁️ Test Preview
+                  </button>
+                  <small class="setting-desc" style="margin-top: 6px; display: block;">Test the visual break reminder screen.</small>
                 </div>
               </div>
+            </div>
 
-              <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
-                <label>{{ t("message.breakFullscreen") }}</label>
-                <div class="status-toggle">
-                  <label class="switch">
-                    <input type="checkbox" v-model="settings.break_fullscreen" :disabled="!settings.break_reminder_enabled" />
-                    <span class="slider"></span>
-                  </label>
-                  <span :style="{ color: settings.break_fullscreen ? 'var(--success)' : 'var(--text-muted)' }">{{ settings.break_fullscreen ? t("message.enabled") : t("message.disabled") }}</span>
+            <!-- Group 2: Mini Break Settings -->
+            <div class="settings-group" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+              <h3 class="settings-group-title">Mini Break Settings</h3>
+              <div class="settings-grid">
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>Enable Mini Breaks</label>
+                  <div class="status-toggle">
+                    <label class="switch">
+                      <input type="checkbox" v-model="settings.break_mini_enabled" :disabled="!settings.break_reminder_enabled" />
+                      <span class="slider"></span>
+                    </label>
+                    <span :style="{ color: settings.break_mini_enabled && settings.break_reminder_enabled ? 'var(--success)' : 'var(--danger)' }">
+                      {{ settings.break_mini_enabled && settings.break_reminder_enabled ? t("message.enabled") : t("message.disabled") }}
+                    </span>
+                  </div>
+                  <small class="setting-desc">Enable or disable short micro-breaks.</small>
                 </div>
-                <small class="setting-desc">{{ t("message.breakFullscreenDesc") }}</small>
+
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled || !settings.break_mini_enabled }">
+                  <label>{{ t("message.miniBreakInterval") }}</label>
+                  <input type="number" v-model.number="settings.break_mini_interval_minutes" min="1" :disabled="!settings.break_reminder_enabled || !settings.break_mini_enabled" />
+                  <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+                </div>
+
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled || !settings.break_mini_enabled }">
+                  <label>{{ t("message.miniBreakDuration") }}</label>
+                  <input type="number" v-model.number="settings.break_mini_duration_seconds" min="5" :disabled="!settings.break_reminder_enabled || !settings.break_mini_enabled" />
+                  <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Group 3: Long Break Settings -->
+            <div class="settings-group" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+              <h3 class="settings-group-title">Long Break Settings</h3>
+              <div class="settings-grid">
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>Enable Long Breaks</label>
+                  <div class="status-toggle">
+                    <label class="switch">
+                      <input type="checkbox" v-model="settings.break_long_enabled" :disabled="!settings.break_reminder_enabled" />
+                      <span class="slider"></span>
+                    </label>
+                    <span :style="{ color: settings.break_long_enabled && settings.break_reminder_enabled ? 'var(--success)' : 'var(--danger)' }">
+                      {{ settings.break_long_enabled && settings.break_reminder_enabled ? t("message.enabled") : t("message.disabled") }}
+                    </span>
+                  </div>
+                  <small class="setting-desc">Enable or disable longer rest periods.</small>
+                </div>
+
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled || !settings.break_long_enabled }">
+                  <label>{{ t("message.longBreakDuration") }}</label>
+                  <input type="number" v-model.number="settings.break_long_duration_seconds" min="10" :disabled="!settings.break_reminder_enabled || !settings.break_long_enabled" />
+                  <small class="setting-desc">{{ t("message.seconds") || "seconds" }}</small>
+                </div>
+
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled || !settings.break_long_enabled }">
+                  <label>{{ t("message.miniBreaksBeforeLong") }}</label>
+                  <input type="number" v-model.number="settings.break_mini_breaks_before_long" min="1" :disabled="!settings.break_reminder_enabled || !settings.break_long_enabled" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Group 4: Postpone Settings -->
+            <div class="settings-group" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+              <h3 class="settings-group-title">Postpone Settings</h3>
+              <div class="settings-grid">
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>{{ t("message.breakPostponeLimit") }}</label>
+                  <input type="number" v-model.number="settings.break_postpone_limit" min="0" :disabled="!settings.break_reminder_enabled" />
+                </div>
+
+                <div class="card setting-card" :class="{ 'card-disabled': !settings.break_reminder_enabled }">
+                  <label>{{ t("message.breakPostponeDuration") }}</label>
+                  <input type="number" v-model.number="settings.break_postpone_duration_minutes" min="1" :disabled="!settings.break_reminder_enabled" />
+                  <small class="setting-desc">{{ t("message.minutes") || "minutes" }}</small>
+                </div>
               </div>
             </div>
           </section>
@@ -3961,6 +4061,31 @@ body {
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.sidebar-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-body::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+.sidebar-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .logo {
@@ -4096,6 +4221,162 @@ nav button.active {
 .btn-stop:hover {
   filter: brightness(1.1);
 }
+
+/* Floating Wellness Widget (FAB) */
+.floating-wellness-widget {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  font-family: inherit;
+}
+
+.wellness-fab {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 50px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.wellness-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.55);
+}
+
+.fab-icon {
+  font-size: 1.1rem;
+}
+
+.fab-text {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Popover Panel */
+.wellness-popover {
+  width: 320px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 18px !important;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(15px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Popover Inner Styles */
+.popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.popover-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.popover-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.popover-close:hover {
+  color: var(--danger);
+}
+
+.popover-section {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.popover-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.popover-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.break-fab-status {
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.fab-break-badge {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.fab-break-badge.counting {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success);
+}
+
+.fab-break-badge.on-break {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+
+.fab-break-badge.pre-break {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+
+.fab-break-badge.paused {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+}
+
+.fab-break-badge.idle {
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text-muted);
+}
+
 
 /* ─── Main Content ─────────────────────────────────────────────── */
 .main-content {
@@ -4260,7 +4541,8 @@ header h1 {
 
 /* Productivity grid default */
 .activity-summary-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 24px;
   padding: 0 16px 24px 16px;
 }
@@ -4368,23 +4650,109 @@ header h1 {
   .app-layout {
     flex-direction: column;
     height: 100vh;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .sidebar {
+    order: 2;
     width: 100%;
     min-width: 0;
-    max-height: 44vh;
-    overflow: auto;
+    max-height: none;
+    height: auto;
+    overflow: visible;
     border-right: none;
+    border-top: 1px solid var(--border-color);
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .logo {
+    display: none !important;
+  }
+
+  .sidebar-body {
+    flex: 0;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  nav {
+    flex-direction: row;
+    padding: 0;
+    gap: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  nav button {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    font-size: 0.78rem;
+    border-radius: 0;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 3px solid transparent;
+    transition: all 0.15s ease;
+  }
+
+  nav button.active {
+    border-radius: 0;
+    background: rgba(99, 102, 241, 0.1);
+    border-bottom: 3px solid var(--accent);
+    color: var(--accent);
+  }
+
+  nav button:hover {
+    background: rgba(99, 102, 241, 0.05);
+    border-radius: 0;
+  }
+
+  .tracking-control {
+    order: -1;
+    border-top: none;
     border-bottom: 1px solid var(--border-color);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .tracking-status {
+    margin-bottom: 0;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  .tracking-buttons {
+    gap: 4px;
+  }
+
+  .btn-tracking {
+    padding: 6px 10px !important;
+    font-size: 0.75rem;
+  }
+
+  .api-queue-indicator {
+    display: none;
+  }
+
+  .user-badge {
+    display: none;
   }
 
   .main-content {
+    order: 1;
     width: 100%;
     min-width: 0;
     padding: 14px 12px 18px;
     overflow: auto;
+    flex: 1;
   }
 
   .summary-cards {
@@ -4416,7 +4784,7 @@ header h1 {
 
   .view-productivity .activity-summary-row {
     display: grid !important;
-    grid-template-columns: 1fr !important;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
     gap: 12px !important;
     padding: 0 0 12px 0 !important;
   }
@@ -4478,6 +4846,51 @@ header h1 {
     font-size: 0.7rem;
     padding: 4px 8px;
     min-width: 94px;
+  }
+
+  .floating-wellness-widget {
+    bottom: 80px;
+  }
+
+  .nav-scroll-wrapper {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .nav-scroll-btn {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 28px;
+    z-index: 5;
+    background: none;
+    border: none;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--accent);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .nav-scroll-left {
+    left: 0;
+    background: linear-gradient(to right, var(--sidebar-bg) 60%, transparent);
+    padding-right: 4px;
+  }
+
+  .nav-scroll-right {
+    right: 0;
+    background: linear-gradient(to left, var(--sidebar-bg) 60%, transparent);
+    padding-left: 4px;
+  }
+
+  .nav-scroll-btn:hover {
+    color: var(--text-color);
   }
 }
 
@@ -4868,10 +5281,11 @@ input[type="checkbox"] {
 
 /* ─── Tracking Control ─────────────────────────────────────────── */
 .tracking-control {
-  margin: 24px 16px 16px;
-  padding: 16px;
-  background: var(--bg-color);
-  border-radius: 12px;
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--sidebar-bg);
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .tracking-status {
@@ -5533,6 +5947,24 @@ input[type="date"] {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-group-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-color);
+  opacity: 0.85;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+  margin-top: 8px;
+  margin-bottom: 4px;
 }
 
 /* Categories & Badges */
@@ -6309,5 +6741,402 @@ select {
   .calendar-day-bar {
     font-size: 0.5rem;
   }
+}
+
+/* Merged Calendar & Productivity Layout - Premium Redesign */
+.productivity-header-deck {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.productivity-header-deck .view-title {
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--text-color);
+}
+.productivity-header-deck .view-subtitle {
+  margin: 4px 0 0 0;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+.productivity-header-deck .selected-date-highlight {
+  color: var(--accent);
+  font-weight: 700;
+  background: rgba(99, 102, 241, 0.08);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.modern-select {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s;
+}
+.modern-select:hover {
+  border-color: var(--accent);
+}
+.date-picker-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.modern-date-input {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  font-size: 0.85rem;
+  font-weight: 600;
+  outline: none;
+}
+.date-sep {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.calendar-productivity-layout {
+  display: flex;
+  gap: 24px;
+  align-items: start;
+}
+.calendar-productivity-layout.has-calendar {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+}
+
+.calendar-sidebar-card {
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  position: sticky;
+  top: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+.calendar-sidebar-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.calendar-sidebar-header .btn-today {
+  width: 100%;
+  padding: 8px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.month-selector {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,0,0,0.02);
+  border-radius: 8px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+}
+.month-selector .btn-nav {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.month-selector .btn-nav:hover {
+  background: var(--border-color);
+}
+.month-selector .current-month {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-color);
+}
+
+.calendar-weekdays-container {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr) !important;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.calendar-grid-container {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr) !important;
+  gap: 6px !important;
+  width: 100% !important;
+}
+.calendar-sidebar-card .calendar-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  border-radius: 10px;
+  padding: 6px 2px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.calendar-sidebar-card .calendar-cell-empty {
+  cursor: default;
+  background: transparent !important;
+}
+.calendar-sidebar-card .calendar-day-num {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.calendar-sidebar-card .calendar-day-bar {
+  font-size: 0.55rem;
+  font-weight: 600;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+.calendar-sidebar-card .calendar-cell-today {
+  border: 2px dashed var(--accent) !important;
+  font-weight: 800;
+}
+.calendar-sidebar-card .calendar-cell-selected {
+  background: var(--accent) !important;
+  color: #ffffff !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+.calendar-sidebar-card .calendar-cell-selected .calendar-day-bar {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.productivity-main-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+}
+
+/* Premium Metrics Cards */
+.activity-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+}
+.activity-stat-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  transition: all 0.2s;
+}
+.activity-stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+}
+
+.total-time-card::before { background-color: var(--accent); }
+.active-time-card::before { background-color: var(--success); }
+.idle-time-card::before { background-color: var(--danger); }
+.keyboard-card::before { background-color: #6366f1; }
+.mouse-card::before { background-color: #a855f7; }
+
+.stat-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.total-time-card .stat-icon-wrapper { background: rgba(99, 102, 241, 0.1); color: var(--accent); }
+.active-time-card .stat-icon-wrapper { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+.idle-time-card .stat-icon-wrapper { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+.keyboard-card .stat-icon-wrapper { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
+.mouse-card .stat-icon-wrapper { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
+
+.stat-icon {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+.stat-info {
+  display: flex;
+  flex-direction: column;
+}
+.stat-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-color);
+  margin-top: 2px;
+}
+.stat-unit {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+/* Modernized Charts/Tables Grid */
+.productivity-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 24px;
+}
+.productivity-grid.single-column {
+  grid-template-columns: 1fr !important;
+}
+.productivity-grid .card {
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+}
+.card-title {
+  margin: 0 0 20px 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.chart-container {
+  display: flex;
+  flex-direction: column;
+}
+.chart-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 250px;
+}
+
+/* Modern categories list card */
+.modern-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.modern-table th {
+  padding: 12px 16px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 2px solid var(--border-color);
+  font-weight: 700;
+}
+.modern-table td {
+  padding: 14px 16px;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-color);
+}
+.modern-table tr:last-child td {
+  border-bottom: none;
+}
+.modern-table tbody tr {
+  transition: background-color 0.15s;
+}
+.modern-table tbody tr:hover {
+  background-color: rgba(99, 102, 241, 0.02);
+}
+.app-name-cell {
+  font-weight: 600;
+}
+.time-spent-cell {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+@media (max-width: 1180px) {
+  .productivity-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1050px) {
+  .calendar-productivity-layout.has-calendar {
+    grid-template-columns: 1fr;
+  }
+  .calendar-sidebar-card {
+    position: static !important;
+    top: 0 !important;
+    width: 100% !important;
+  }
+}
+
+/* Custom Premium Primary Button Styling (Bootstrap-like) */
+.btn-primary {
+  background: var(--accent) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-family: inherit !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  outline: none !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25) !important;
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+}
+
+.btn-primary:disabled {
+  opacity: 0.55 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
 }
 </style>

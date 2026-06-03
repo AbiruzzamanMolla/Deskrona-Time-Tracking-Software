@@ -127,7 +127,8 @@ pub fn start_break_reminder(app: AppHandle) {
                 Err(_) => continue,
             };
 
-            if !settings.break_reminder_enabled {
+            let both_disabled = !settings.break_mini_enabled && !settings.break_long_enabled;
+            if !settings.break_reminder_enabled || both_disabled {
                 if current_state != STATE_IDLE {
                     BREAK_STATE.store(STATE_IDLE, Ordering::SeqCst);
                 }
@@ -177,19 +178,36 @@ pub fn start_break_reminder(app: AppHandle) {
                         BREAK_IS_LONG.store(is_long, Ordering::SeqCst);
 
                         if is_long {
-                            // Go straight to long break
-                            let duration = settings.break_long_duration_seconds;
-                            BREAK_COUNTDOWN_SECS.store(duration, Ordering::SeqCst);
+                            if settings.break_long_enabled {
+                                let pre_warn = settings.break_pre_notification_seconds;
+                                BREAK_COUNTDOWN_SECS.store(pre_warn, Ordering::SeqCst);
+                                BREAK_POSTPONE_COUNT.store(0, Ordering::SeqCst);
+                                let idea = pick_random_idea();
+                                *CURRENT_BREAK_IDEA.lock().unwrap() = Some(idea.clone());
+                                BREAK_STATE.store(STATE_PRE_BREAK, Ordering::SeqCst);
+                                let _ = app.emit("break-pre-notification", &idea);
+                            } else {
+                                // Skip long break, reset mini cycle
+                                BREAK_MINI_COMPLETED.store(0, Ordering::SeqCst);
+                                let interval_secs = settings.break_mini_interval_minutes * 60;
+                                BREAK_COUNTDOWN_SECS.store(interval_secs, Ordering::SeqCst);
+                            }
                         } else {
-                            // Show pre-break warning first
-                            let pre_warn = settings.break_pre_notification_seconds;
-                            BREAK_COUNTDOWN_SECS.store(pre_warn, Ordering::SeqCst);
+                            if settings.break_mini_enabled {
+                                let pre_warn = settings.break_pre_notification_seconds;
+                                BREAK_COUNTDOWN_SECS.store(pre_warn, Ordering::SeqCst);
+                                BREAK_POSTPONE_COUNT.store(0, Ordering::SeqCst);
+                                let idea = pick_random_idea();
+                                *CURRENT_BREAK_IDEA.lock().unwrap() = Some(idea.clone());
+                                BREAK_STATE.store(STATE_PRE_BREAK, Ordering::SeqCst);
+                                let _ = app.emit("break-pre-notification", &idea);
+                            } else {
+                                // Skip mini break, count as completed towards next long break
+                                BREAK_MINI_COMPLETED.fetch_add(1, Ordering::SeqCst);
+                                let interval_secs = settings.break_mini_interval_minutes * 60;
+                                BREAK_COUNTDOWN_SECS.store(interval_secs, Ordering::SeqCst);
+                            }
                         }
-                        BREAK_POSTPONE_COUNT.store(0, Ordering::SeqCst);
-                        let idea = pick_random_idea();
-                        *CURRENT_BREAK_IDEA.lock().unwrap() = Some(idea.clone());
-                        BREAK_STATE.store(STATE_PRE_BREAK, Ordering::SeqCst);
-                        let _ = app.emit("break-pre-notification", &idea);
                     } else {
                         BREAK_COUNTDOWN_SECS.store(remaining, Ordering::SeqCst);
                     }
@@ -341,6 +359,42 @@ pub fn reset_break_cycle(app: &AppHandle) -> Result<BreakReminderState, String> 
 #[tauri::command]
 pub fn cmd_break_status(app: tauri::AppHandle) -> Result<BreakReminderState, String> {
     Ok(get_break_state(&app))
+}
+
+#[tauri::command]
+pub fn cmd_break_test_preview(app: tauri::AppHandle) -> Result<(), String> {
+    // Temporarily enter pre-break state to force the UI to show the overlay
+    BREAK_STATE.store(STATE_PRE_BREAK, Ordering::SeqCst);
+    BREAK_COUNTDOWN_SECS.store(5, Ordering::SeqCst);
+    let _ = app.emit("break-pre-notification", "Test preview of break overlay.");
+    
+    // In 5 seconds, switch to actual break test
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        // Countdown the 5 seconds of pre-break
+        for i in (0..5).rev() {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if BREAK_STATE.load(Ordering::SeqCst) == STATE_PRE_BREAK {
+                BREAK_COUNTDOWN_SECS.store(i, Ordering::SeqCst);
+            }
+        }
+
+        BREAK_STATE.store(STATE_ON_BREAK, Ordering::SeqCst);
+        BREAK_COUNTDOWN_SECS.store(20, Ordering::SeqCst);
+        let _ = app_clone.emit("break-started", "Test preview of break overlay running.");
+        
+        // Countdown the 20 seconds of actual break
+        for i in (0..20).rev() {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if BREAK_STATE.load(Ordering::SeqCst) == STATE_ON_BREAK {
+                BREAK_COUNTDOWN_SECS.store(i, Ordering::SeqCst);
+            }
+        }
+        
+        let _ = cmd_break_reset(app_clone);
+    });
+    
+    Ok(())
 }
 
 #[tauri::command]
