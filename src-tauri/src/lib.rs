@@ -632,13 +632,17 @@ pub fn run() {
                                 }
                             } else {
                                 // Create overlay window
-                                let url = match &app_handle_bg.config().build.dev_url {
-                                    Some(dev_url) => {
-                                        let target_url = dev_url.join("overlay.html").unwrap();
-                                        tauri::WebviewUrl::External(target_url)
-                                    }
-                                    None => tauri::WebviewUrl::App("overlay.html".into()),
-                                };
+                                let url = if cfg!(dev) {
+                                     match &app_handle_bg.config().build.dev_url {
+                                         Some(dev_url) => {
+                                             let target_url = dev_url.join("overlay.html").unwrap();
+                                             tauri::WebviewUrl::External(target_url)
+                                         }
+                                         None => tauri::WebviewUrl::App("overlay.html".into()),
+                                     }
+                                 } else {
+                                     tauri::WebviewUrl::App("overlay.html".into())
+                                 };
 
                                 if let Ok(ref win) = tauri::WebviewWindowBuilder::new(
                                     &app_handle_bg,
@@ -717,13 +721,17 @@ pub fn run() {
                                         let logical_w = size.width as f64 / scale;
                                         let logical_h = size.height as f64 / scale;
 
-                                        let url = match &app_handle_bg.config().build.dev_url {
-                                            Some(dev_url) => {
-                                                let target_url = dev_url.join("break_overlay.html").unwrap();
-                                                tauri::WebviewUrl::External(target_url)
-                                            }
-                                            None => tauri::WebviewUrl::App("break_overlay.html".into()),
-                                        };
+                                        let url = if cfg!(dev) {
+                                             match &app_handle_bg.config().build.dev_url {
+                                                 Some(dev_url) => {
+                                                     let target_url = dev_url.join("break_overlay.html").unwrap();
+                                                     tauri::WebviewUrl::External(target_url)
+                                                 }
+                                                 None => tauri::WebviewUrl::App("break_overlay.html".into()),
+                                             }
+                                         } else {
+                                             tauri::WebviewUrl::App("break_overlay.html".into())
+                                         };
 
                                         let mut builder = tauri::WebviewWindowBuilder::new(
                                             &app_handle_bg,
