@@ -12,7 +12,11 @@ use regex::Regex;
 use std::os::windows::process::CommandExt;
 
 use crate::db::get_db_path;
-use screenshots::Screen;
+use xcap::Monitor;
+
+fn is_wayland() -> bool {
+    std::env::var("WAYLAND_DISPLAY").is_ok()
+}
 
 // Tracking states: 0 = stopped, 1 = running, 2 = paused
 pub static TRACKING_STATE: AtomicU8 = AtomicU8::new(1); // 1: running, 2: paused, 0: stopped
@@ -278,11 +282,18 @@ pub fn start_tracking(app: AppHandle) {
 
     // --- Screenshot Thread ---
     let app_clone = app.clone();
+    let is_wayland = is_wayland();
+    if is_wayland {
+        eprintln!("Deskrona: Wayland detected, X11 screen capture unavailable. Screenshots disabled.");
+    }
     std::thread::spawn(move || {
     let mut last_screenshot_time: Option<Instant> = None; // None = trigger immediately on first loop
 
         loop {
             std::thread::sleep(Duration::from_secs(5));
+            if is_wayland {
+                continue; // X11 capture unsupported on Wayland
+            }
             let state = TRACKING_STATE.load(Ordering::SeqCst);
             if state != 1 {
                 continue; // Only take screenshots when running
@@ -305,45 +316,45 @@ pub fn start_tracking(app: AppHandle) {
                 let dir = crate::db::get_screenshot_dir(&app_clone);
                 let now_str = Utc::now().format("%Y%m%d_%H%M%S").to_string();
 
-                if let Ok(screens) = Screen::all() {
-                    let mut min_x = 0;
-                    let mut min_y = 0;
-                    let mut max_x = 0;
-                    let mut max_y = 0;
-                    for screen in &screens {
-                        let info = screen.display_info;
-                        if info.x < min_x { min_x = info.x; }
-                        if info.y < min_y { min_y = info.y; }
-                        if info.x + info.width as i32 > max_x { max_x = info.x + info.width as i32; }
-                        if info.y + info.height as i32 > max_y { max_y = info.y + info.height as i32; }
-                    }
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Ok(monitors) = Monitor::all() {
+                        let mut min_x = i32::MAX;
+                        let mut min_y = i32::MAX;
+                        let mut max_x = i32::MIN;
+                        let mut max_y = i32::MIN;
 
-                    let width = (max_x - min_x) as u32;
-                    let height = (max_y - min_y) as u32;
-                    if width > 0 && height > 0 {
-                        let mut combined_image = image::RgbaImage::new(width, height);
-                        for screen in screens {
-                            if let Ok(img) = screen.capture() {
-                                let info = screen.display_info;
-                                let offset_x = (info.x - min_x) as i64;
-                                let offset_y = (info.y - min_y) as i64;
-
-                                let w = img.width();
-                                let h = img.height();
-                                let raw = img.into_raw();
-                                if let Some(converted_img) = image::RgbaImage::from_raw(w, h, raw) {
-                                    image::imageops::overlay(&mut combined_image, &converted_img, offset_x, offset_y);
-                                }
+                        for monitor in &monitors {
+                            if let (Ok(x), Ok(y), Ok(w), Ok(h)) = (monitor.x(), monitor.y(), monitor.width(), monitor.height()) {
+                                let x = x;
+                                let y = y;
+                                let w = w as i32;
+                                let h = h as i32;
+                                if x < min_x { min_x = x; }
+                                if y < min_y { min_y = y; }
+                                if x + w > max_x { max_x = x + w; }
+                                if y + h > max_y { max_y = y + h; }
                             }
                         }
-                        let filename = format!("screenshot_{}.png", now_str);
-                        let mut path = std::path::PathBuf::from(&dir);
-                        path.push(&filename);
-                        if let Ok(_) = combined_image.save(&path) {
-                            let _ = crate::db::insert_screenshot(&app_clone, &get_active_user_id(), &path.to_string_lossy());
+
+                        let (width, height) = ((max_x - min_x) as u32, (max_y - min_y) as u32);
+                        if width > 0 && height > 0 {
+                            let mut combined_image = image::RgbaImage::new(width, height);
+                            for monitor in monitors {
+                                if let (Ok(x), Ok(y), Ok(img)) = (monitor.x(), monitor.y(), monitor.capture_image()) {
+                                    let offset_x = (x - min_x) as i64;
+                                    let offset_y = (y - min_y) as i64;
+                                    image::imageops::overlay(&mut combined_image, &img, offset_x, offset_y);
+                                }
+                            }
+                            let filename = format!("screenshot_{}.png", now_str);
+                            let mut path = std::path::PathBuf::from(&dir);
+                            path.push(&filename);
+                            if let Ok(()) = combined_image.save(&path) {
+                                let _ = crate::db::insert_screenshot(&app_clone, &get_active_user_id(), &path.to_string_lossy());
+                            }
                         }
                     }
-                }
+                }));
             }
         }
     });
@@ -355,11 +366,12 @@ pub fn start_tracking(app: AppHandle) {
         let mut last_keys: Vec<device_query::Keycode> = device_state.get_keys();
         let mut last_mouse_input_time = Instant::now();
         let mut last_keyboard_input_time = Instant::now();
-        // Reload threshold every N seconds to respect settings changes
         let mut idle_threshold = idle_threshold_base;
         let mut monitor_mouse = true;
         let mut monitor_keyboard = true;
         let mut threshold_reload_counter: u32 = 0;
+        let mut window_flush_counter: u32 = 0;
+        let mut active_window_failures: u32 = 0;
         if let Ok(s) = crate::db::get_settings(&app) {
             monitor_mouse = s.idle_monitor_mouse;
             monitor_keyboard = s.idle_monitor_keyboard;
@@ -368,14 +380,50 @@ pub fn start_tracking(app: AppHandle) {
         loop {
             std::thread::sleep(Duration::from_secs(1));
 
-            // Reload idle threshold from settings every 60 seconds
             threshold_reload_counter += 1;
+            window_flush_counter += 1;
             if threshold_reload_counter >= 60 {
                 threshold_reload_counter = 0;
                 idle_threshold = Duration::from_secs(crate::db::get_idle_threshold_secs(&app));
                 if let Ok(s) = crate::db::get_settings(&app) {
                     monitor_mouse = s.idle_monitor_mouse;
                     monitor_keyboard = s.idle_monitor_keyboard;
+                }
+            }
+
+            // Periodic flush to DB every 60s to persist time even without window changes
+            if window_flush_counter >= 60 {
+                window_flush_counter = 0;
+                if let Ok(mut current) = CURRENT_WINDOW.lock() {
+                    if let Some(cw) = current.take() {
+                        let now = Local::now();
+                        let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
+                        if duration > 0 {
+                            if let Ok(conn) = Connection::open(&db_path) {
+                                let _ = conn.execute(
+                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    (
+                                        Uuid::new_v4().to_string(),
+                                        get_active_user_id(),
+                                        &cw.app_name,
+                                        &cw.window_title,
+                                        &cw.start_time.to_rfc3339(),
+                                        &now.to_rfc3339(),
+                                        &duration,
+                                        &now.to_rfc3339(),
+                                        &now.to_rfc3339(),
+                                        "active",
+                                    ),
+                                );
+                            }
+                        }
+                        *current = Some(ActiveWindowInfo {
+                            app_name: cw.app_name.clone(),
+                            window_title: cw.window_title.clone(),
+                            start_time: now,
+                        });
+                    }
                 }
             }
 
@@ -576,7 +624,22 @@ pub fn start_tracking(app: AppHandle) {
                         }
                     }
                 }
-                Err(_) => {}
+                Err(_) => {
+                    active_window_failures += 1;
+                    // Create fallback window on repeated failures (Linux/Wayland)
+                    if active_window_failures >= 3 {
+                        if let Ok(mut current) = CURRENT_WINDOW.lock() {
+                            if current.is_none() {
+                                *current = Some(ActiveWindowInfo {
+                                    app_name: "Desktop".to_string(),
+                                    window_title: "Active".to_string(),
+                                    start_time: Local::now(),
+                                });
+                                active_window_failures = 0;
+                            }
+                        }
+                    }
+                }
             }
         }
     });
