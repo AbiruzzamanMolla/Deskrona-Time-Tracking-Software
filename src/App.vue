@@ -87,6 +87,12 @@ interface Settings {
   break_long_enabled?: boolean;
   break_allow_force_exit?: boolean;
   break_bg_color?: string;
+  task_tracking_enabled?: boolean;
+  task_auto_detect_enabled?: boolean;
+  task_show_in_overlay?: boolean;
+  task_show_in_tray?: boolean;
+  task_timesheet_week_start?: string;
+  task_show_untracked?: boolean;
 }
 
 interface Session {
@@ -206,6 +212,12 @@ const settings = ref<Settings>({
   break_long_enabled: true,
   break_allow_force_exit: true,
   break_bg_color: "#0f172a",
+  task_tracking_enabled: true,
+  task_auto_detect_enabled: true,
+  task_show_in_overlay: false,
+  task_show_in_tray: true,
+  task_timesheet_week_start: "monday",
+  task_show_untracked: true,
 });
 
 const apiConfig = ref<ApiConfigFile>({
@@ -315,6 +327,269 @@ const breakReset = async () => {
   }
 };
 
+
+// ─── Projects & Tasks Interfaces ──────────────────────────────────────────
+interface Project {
+  id: string;
+  name: string;
+  color: string;
+  archived: boolean;
+  created_at: string;
+}
+interface Task {
+  id: string;
+  project_id: string;
+  name: string;
+  status: string;
+  created_at: string;
+}
+interface TimesheetCell {
+  task_id: string;
+  task_name: string;
+  project_id: string;
+  project_name: string;
+  project_color: string;
+  date: string;
+  seconds: number;
+}
+interface DailyTaskEntry {
+  task_id: string | null;
+  task_name: string;
+  project_name: string | null;
+  total_seconds: number;
+}
+
+// ─── Projects & Tasks State ──────────────────────────────────────────
+const projects = ref<Project[]>([]);
+const tasks = ref<Task[]>([]);
+const selectedProjectId = ref<string | null>(null);
+const activeTaskId = ref<string | null>(null);
+const activeTaskName = ref<string | null>(null);
+const newProjectName = ref('');
+const newProjectColor = ref('#3b82f6');
+const newTaskName = ref('');
+const editingProject = ref<Project | null>(null);
+const editingTask = ref<Task | null>(null);
+const timesheetData = ref<TimesheetCell[]>([]);
+const dailyTaskSummary = ref<DailyTaskEntry[]>([]);
+const timesheetDateRange = ref<{ from: string; to: string }>({ from: '', to: '' });
+const showProjectForm = ref(false);
+const showTaskForm = ref(false);
+
+// Task rules state
+interface TaskRule {
+  id: string;
+  task_id: string;
+  app_name: string;
+  window_pattern: string | null;
+}
+const taskRules = ref<TaskRule[]>([]);
+const newTaskRuleAppName = ref('');
+const newTaskRulePattern = ref('');
+const showRulesForTaskId = ref<string | null>(null);
+
+// Filters & Archiving settings
+const showArchivedProjects = ref(false);
+const taskStatusFilter = ref<'all' | 'active' | 'done'>('all');
+
+const loadProjects = async () => {
+  try {
+    projects.value = await invoke('cmd_list_projects') as Project[];
+  } catch (e) { console.error(e); }
+};
+
+const loadTasks = async (projectId?: string) => {
+  try {
+    tasks.value = await invoke('cmd_list_tasks', { projectId: projectId || null }) as Task[];
+  } catch (e) { console.error(e); }
+};
+
+const createProject = async () => {
+  if (!newProjectName.value.trim()) return;
+  try {
+    await invoke('cmd_create_project', { name: newProjectName.value.trim(), color: newProjectColor.value });
+    newProjectName.value = '';
+    newProjectColor.value = '#3b82f6';
+    showProjectForm.value = false;
+    await loadProjects();
+  } catch (e) { console.error(e); }
+};
+
+const updateProject = async (id: string, name: string, color: string) => {
+  try {
+    await invoke('cmd_update_project', { id, name, color });
+    await loadProjects();
+    editingProject.value = null;
+  } catch (e) { console.error(e); }
+};
+
+const archiveProject = async (id: string) => {
+  try {
+    await invoke('cmd_update_project', { id, archived: true });
+    await loadProjects();
+  } catch (e) { console.error(e); }
+};
+
+const unarchiveProject = async (id: string) => {
+  try {
+    await invoke('cmd_update_project', { id, archived: false });
+    await loadProjects();
+  } catch (e) { console.error(e); }
+};
+
+const deleteProject = async (id: string) => {
+  if (!confirm("Are you sure you want to delete this project? This will delete all its tasks and cannot be undone.")) return;
+  try {
+    await invoke('cmd_delete_project', { id });
+    await loadProjects();
+  } catch (e) { console.error(e); }
+};
+
+const createTask = async (projectId: string) => {
+  if (!newTaskName.value.trim()) return;
+  try {
+    await invoke('cmd_create_task', { projectId, name: newTaskName.value.trim() });
+    newTaskName.value = '';
+    showTaskForm.value = false;
+    await loadTasks(projectId);
+  } catch (e) { console.error(e); }
+};
+
+const updateTask = async (id: string, name: string, status: string) => {
+  try {
+    await invoke('cmd_update_task', { id, name, status });
+    await loadTasks(selectedProjectId.value || undefined);
+    editingTask.value = null;
+  } catch (e) { console.error(e); }
+};
+
+const deleteTask = async (id: string) => {
+  if (!confirm("Are you sure you want to delete this task? This cannot be undone.")) return;
+  try {
+    await invoke('cmd_delete_task', { id });
+    await loadTasks(selectedProjectId.value || undefined);
+  } catch (e) { console.error(e); }
+};
+
+const loadActiveTask = async () => {
+  try {
+    const active = await invoke('cmd_get_active_task') as Task | null;
+    if (active) {
+      activeTaskId.value = active.id;
+      activeTaskName.value = active.name;
+      selectedProjectId.value = active.project_id;
+      await loadTasks(active.project_id);
+    } else {
+      activeTaskId.value = null;
+      activeTaskName.value = null;
+    }
+  } catch (e) { console.error(e); }
+};
+
+const setActiveTask = async (taskId: string | null) => {
+  try {
+    await invoke('cmd_set_active_task', { taskId });
+    activeTaskId.value = taskId;
+    if (taskId) {
+      // Find locally or reload
+      const allTasks = await invoke('cmd_list_tasks', { projectId: null }) as Task[];
+      const task = allTasks.find(t => t.id === taskId);
+      activeTaskName.value = task?.name || null;
+      
+      // Auto-start general tracking if stopped/paused
+      if (trackingStatus.value !== "running") {
+        await setTracking("running");
+      }
+    } else {
+      activeTaskName.value = null;
+    }
+    await loadDailyTaskSummary(todayStr.value);
+  } catch (e) { console.error(e); }
+};
+
+const loadTaskRules = async (taskId: string) => {
+  try {
+    taskRules.value = await invoke('cmd_list_task_rules', { taskId }) as TaskRule[];
+  } catch (e) { console.error(e); }
+};
+
+const createTaskRule = async (taskId: string) => {
+  if (!newTaskRuleAppName.value.trim()) return;
+  try {
+    await invoke('cmd_create_task_rule', {
+      taskId,
+      appName: newTaskRuleAppName.value.trim(),
+      windowPattern: newTaskRulePattern.value.trim() || null
+    });
+    newTaskRuleAppName.value = '';
+    newTaskRulePattern.value = '';
+    await loadTaskRules(taskId);
+  } catch (e) { console.error(e); }
+};
+
+const deleteTaskRule = async (ruleId: string, taskId: string) => {
+  try {
+    await invoke('cmd_delete_task_rule', { id: ruleId });
+    await loadTaskRules(taskId);
+  } catch (e) { console.error(e); }
+};
+
+const loadTimesheetData = async (from: string, to: string) => {
+  try {
+    timesheetData.value = await invoke('cmd_get_timesheet_data', { from, to }) as TimesheetCell[];
+  } catch (e) { console.error(e); }
+};
+
+const setTimesheetPreset = (preset: 'today' | 'week' | 'last_week' | 'month') => {
+  const today = new Date();
+  let fromDate = new Date();
+  let toDate = new Date();
+
+  if (preset === 'today') {
+    fromDate = today;
+  } else if (preset === 'week') {
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    fromDate = new Date(today.setDate(diff));
+  } else if (preset === 'last_week') {
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1) - 7;
+    fromDate = new Date(today.setDate(diff));
+    toDate = new Date(fromDate.getTime() + 6 * 24 * 60 * 60 * 1000);
+  } else if (preset === 'month') {
+    fromDate = new Date(today.getFullYear(), today.getMonth(), 1);
+  }
+
+  timesheetDateRange.value = {
+    from: fromDate.toISOString().split('T')[0],
+    to: toDate.toISOString().split('T')[0]
+  };
+  loadTimesheetData(timesheetDateRange.value.from, timesheetDateRange.value.to);
+};
+
+const exportTimesheetCSV = () => {
+  if (timesheetData.value.length === 0) return;
+  let csv = 'Project,Task,Date,Time Spent (Seconds),Time Spent (Formatted)\n';
+  timesheetData.value.forEach(cell => {
+    csv += `"${cell.project_name.replace(/"/g, '""')}","${cell.task_name.replace(/"/g, '""')}",${cell.date},${cell.seconds},"${formatTime(cell.seconds)}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `timesheet_${timesheetDateRange.value.from}_to_${timesheetDateRange.value.to}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+const loadDailyTaskSummary = async (date: string) => {
+  try {
+    dailyTaskSummary.value = await invoke('cmd_get_daily_task_summary', { date }) as DailyTaskEntry[];
+  } catch (e) { console.error(e); }
+};
 
 // Pomodoro state
 const pomodoroPhase = ref("idle");
@@ -780,6 +1055,15 @@ const formatTime = (seconds: number): string => {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
+// Compact format for calendar cells: "1h30m" or "45m"
+const formatTimeCompact = (seconds: number): string => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h${m > 0 ? m + 'm' : ''}`;
+  if (m > 0) return `${m}m`;
+  return '<1m';
+};
+
 const updateCategory = async (appName: string, category: string) => {
   try {
     await proxyUpdateAppCategory(appName, category);
@@ -1153,9 +1437,14 @@ const setTracking = async (status: string) => {
     } else if (status === "running" && pauseStartedAt !== null) {
       pausedSeconds.value += Math.floor((Date.now() - pauseStartedAt) / 1000);
       pauseStartedAt = null;
+    } else if (status === "running" && activeTaskId.value) {
+      // Re-activate active task in the database when starting tracking again
+      await invoke('cmd_set_active_task', { taskId: activeTaskId.value });
     } else if (status === "stopped") {
       pausedSeconds.value = 0;
       pauseStartedAt = null;
+      // Stop active task in backend DB is already handled by backend cmd_set_tracking.
+      // We retain the local activeTaskId/activeTaskName reference for auto-resuming.
     }
     trackingStatus.value = status;
     await sendTrackingNativeNotification(status);
@@ -1378,6 +1667,10 @@ const initApp = async () => {
     }
   }, 1000) as unknown) as number;
 
+  // Initial active task loading
+  await loadActiveTask();
+  await loadDailyTaskSummary(todayStr.value);
+
   await listen<string>("tracking-status-changed", (event) => {
     const newStatus = event.payload;
     if (newStatus === "paused" && trackingStatus.value !== "paused") {
@@ -1389,6 +1682,8 @@ const initApp = async () => {
     ) {
       pausedSeconds.value += Math.floor((Date.now() - pauseStartedAt) / 1000);
       pauseStartedAt = null;
+    } else if (newStatus === "running" && activeTaskId.value) {
+      invoke('cmd_set_active_task', { taskId: activeTaskId.value }).catch(console.error);
     } else if (newStatus === "stopped") {
       pausedSeconds.value = 0;
       pauseStartedAt = null;
@@ -1399,6 +1694,39 @@ const initApp = async () => {
       startPomodoro();
     }
   });
+
+  await listen<string | null>("active-task-changed", (event) => {
+    // Only update local activeTaskId if the backend actively changed it to a task,
+    // OR if it is set to null but we are NOT in stopped state.
+    // If tracking is stopped, the backend fires null, but we want to retain activeTaskId locally.
+    if (event.payload || trackingStatus.value !== "stopped") {
+      activeTaskId.value = event.payload;
+      if (event.payload) {
+        invoke('cmd_list_tasks', { projectId: null }).then((allTasks: any) => {
+          const task = (allTasks as Task[]).find(t => t.id === event.payload);
+          activeTaskName.value = task?.name || null;
+          if (task) {
+            selectedProjectId.value = task.project_id;
+            loadTasks(task.project_id);
+          }
+        });
+      } else {
+        activeTaskName.value = null;
+      }
+    }
+    loadDailyTaskSummary(todayStr.value);
+  });
+
+  // Initialize timesheet date range to current week (Mon to Today)
+  const today = new Date();
+  const day = today.getDay();
+  const diff = today.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+  const monday = new Date(today.setDate(diff));
+  timesheetDateRange.value = {
+    from: monday.toISOString().split('T')[0],
+    to: new Date().toISOString().split('T')[0]
+  };
+  await loadTimesheetData(timesheetDateRange.value.from, timesheetDateRange.value.to);
 };
 
 onUnmounted(() => {
@@ -1536,6 +1864,9 @@ const quickFillEndpoints = (serverUrl: string) => {
     autostart_set: `${s}/api/autostart`,
     autostart_get: `${s}/api/autostart`,
     calendar_month: `${s}/api/calendar/month`,
+    projects_sync: `${s}/api/projects/sync`,
+    tasks_sync: `${s}/api/tasks/sync`,
+    task_rules_sync: `${s}/api/task-rules/sync`,
     reset_app: `${s}/api/reset`,
   };
   for (const [key, url] of Object.entries(fill)) {
@@ -1995,6 +2326,9 @@ const doChangeMode = async () => {
             <button :class="{ active: currentView === 'dashboard' }" @click="currentView = 'dashboard'">
               📊 {{ t("message.dashboard") }}
             </button>
+            <button :class="{ active: currentView === 'projects' }" @click="currentView = 'projects'; loadProjects();">
+              📁 {{ t('message.projects') }}
+            </button>
             <button :class="{ active: currentView === 'trackings' }" @click="currentView = 'trackings'">
               📋 {{ t("message.trackings") }}
             </button>
@@ -2010,6 +2344,9 @@ const doChangeMode = async () => {
             <button :class="{ active: currentView === 'productivity' }" @click="currentView = 'productivity'">
               ⭐ {{ t("message.productivity") }}
             </button>
+            <button :class="{ active: currentView === 'timesheet' }" @click="currentView = 'timesheet';">
+              📅 {{ t('message.timesheet') }}
+            </button>
             <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
               ⚙️ {{ t("message.settings") }}
             </button>
@@ -2023,8 +2360,21 @@ const doChangeMode = async () => {
 
       </div>
 
-      <!-- Tracking Control (pinned to bottom) -->
+      <!-- Combined Tracking & Active Task Control Card (pinned to bottom) -->
       <div class="tracking-control">
+        <div v-if="activeTaskId" class="sidebar-active-task-info" style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">
+            <span>Active Task</span>
+            <span v-if="trackingStatus === 'running'" class="active-pulse" style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 1.5s infinite;"></span>
+          </div>
+          <div style="font-weight: 700; font-size: 0.85rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            {{ activeTaskName || 'Loading task...' }}
+          </div>
+          <div style="font-size: 0.75rem; font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-muted);">
+            {{ formatTime(dailyTaskSummary.find(d => d.task_id === activeTaskId)?.total_seconds || 0) }} today
+          </div>
+        </div>
+
         <div class="tracking-status" :class="trackingStatus">
           <span v-if="trackingStatus === 'running'" class="status-dot running"></span>
           <span v-else-if="trackingStatus === 'paused'" class="status-dot paused"></span>
@@ -2039,6 +2389,7 @@ const doChangeMode = async () => {
             }}
           </span>
         </div>
+
         <div class="tracking-buttons">
           <button v-if="trackingStatus === 'running'" class="btn-tracking btn-pause" @click="setTracking('paused')">
             ⏸ {{ t("message.pauseTracking") }}
@@ -2159,8 +2510,14 @@ const doChangeMode = async () => {
     <main class="main-content">
       <!-- DASHBOARD VIEW -->
       <div v-if="currentView === 'dashboard'" class="view-dashboard">
-        <header class="view-header">
-          <h1>{{ t("message.todaySummary") }}</h1>
+        <header class="view-header" style="margin-bottom: 15px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <h1>{{ t("message.todaySummary") }}</h1>
+            <div v-if="activeTaskId" style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--success); font-weight: 600;">
+              <span class="active-pulse" style="width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block;"></span>
+              <span>Running: {{ activeTaskName }}</span>
+            </div>
+          </div>
           <button class="btn-browse" @click="refreshDashboard">
             🔄 {{ t("message.refresh") }}
           </button>
@@ -2690,7 +3047,7 @@ const doChangeMode = async () => {
                   <template v-if="cell">
                     <span class="calendar-day-num">{{ cell.day }}</span>
                     <span v-if="getCalendarDay(cell.dateStr)" class="calendar-day-bar">
-                      {{ formatTime(getCalendarDay(cell.dateStr)!.total_seconds) }}
+                      {{ formatTimeCompact(getCalendarDay(cell.dateStr)!.total_seconds) }}
                     </span>
                   </template>
                 </div>
@@ -2821,8 +3178,8 @@ const doChangeMode = async () => {
             <button :class="['tab-btn', { active: settingsTab === 'overlay' }]" @click="settingsTab = 'overlay'">🪟 {{ t("message.overlay") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'pomodoro' }]" @click="settingsTab = 'pomodoro'">🍅 {{ t("message.pomodoro") }}</button>
             <button :class="['tab-btn', { active: settingsTab === 'break' }]" @click="settingsTab = 'break'">🧘 {{ t("message.breakReminder") }}</button>
-            <button :class="['tab-btn', { active: settingsTab === 'about' }]" @click="settingsTab = 'about'">ℹ️ About</button>
             <button :class="['tab-btn', { active: settingsTab === 'api' }]" @click="settingsTab = 'api'">📡 API Config</button>
+            <button :class="['tab-btn', { active: settingsTab === 'about' }]" @click="settingsTab = 'about'">ℹ️ About</button>
           </div>
         </header>
 
@@ -3249,22 +3606,6 @@ const doChangeMode = async () => {
               <h3 style="margin: 20px 0 8px;">👨‍💻 Developer</h3>
               <div class="card" style="padding: 16px;">
                 <div style="display: flex; align-items: center; gap: 16px;">
-                  <img src="https://avatars.githubusercontent.com/u/90689063?v=4" alt="Abiruzzaman" style="width: 48px; height: 48px; border-radius: 50%;" />
-                  <div>
-                    <strong>Abiruzzaman Molla</strong><br />
-                    <span style="font-size: 0.85rem; color: var(--text-muted);">Full-stack Developer</span>
-                  </div>
-                </div>
-                <div style="margin-top: 12px; display: flex; gap: 12px; flex-wrap: wrap;">
-                  <a class="btn btn-secondary" href="https://github.com/AbiruzzamanMolla" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">🐙 GitHub</a>
-                  <a class="btn btn-secondary" href="https://az.is-a.dev/" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">🌐 Website</a>
-                  <a class="btn btn-secondary" href="https://www.supportkori.com/abiruzzaman" target="_blank" style="padding: 6px 14px; font-size: 0.85rem; text-decoration: none;">❤️ Support</a>
-                </div>
-              </div>
-
-              <h3 style="margin: 20px 0 8px;">👨‍💻 Developer</h3>
-              <div class="card" style="padding: 16px;">
-                <div style="display: flex; align-items: center; gap: 16px;">
                   <img src="https://avatars.githubusercontent.com/u/90689063?v=4" alt="Abiruzzaman" style="width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--accent);" />
                   <div>
                     <strong style="font-size: 1.1rem;">Abiruzzaman Molla</strong><br />
@@ -3459,6 +3800,247 @@ const doChangeMode = async () => {
             </div>
           </section>
 
+        </div>
+      </div>
+
+      <!-- PROJECTS & TASKS VIEW -->
+      <div v-if="currentView === 'projects'" class="view-projects">
+        <header class="view-header" style="flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+          <div class="projects-header-left">
+            <h1>📁 {{ t('message.projects') }}</h1>
+            <span class="projects-count-badge">{{ projects.filter(p => !p.archived).length }} active</span>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="project-action-btn" style="padding: 9px 14px; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;" @click="showArchivedProjects = !showArchivedProjects">
+              📦 {{ showArchivedProjects ? 'Hide Archived' : 'Show Archived' }}
+            </button>
+            <button class="btn-new-project" @click="showProjectForm = !showProjectForm">
+              {{ showProjectForm ? '✕ Cancel' : '+ New Project' }}
+            </button>
+          </div>
+        </header>
+
+        <!-- New Project Form -->
+        <div v-if="showProjectForm" class="project-create-form">
+          <div class="project-form-inner">
+            <div class="form-color-preview" :style="{ background: newProjectColor }"></div>
+            <input v-model="newProjectName" placeholder="Project name…" class="project-name-input" @keyup.enter="createProject" />
+            <label class="color-picker-label" title="Pick color">
+              <span>🎨</span>
+              <input v-model="newProjectColor" type="color" style="position: absolute; opacity: 0; width: 0; height: 0;" />
+            </label>
+            <button class="btn-primary" @click="createProject" :disabled="!newProjectName.trim()">Create Project</button>
+          </div>
+        </div>
+
+        <!-- Active Task Banner -->
+        <div v-if="activeTaskId && trackingStatus === 'running'" class="active-task-banner">
+          <span class="active-pulse"></span>
+          <span class="active-task-label">Tracking:</span>
+          <span class="active-task-name">{{ activeTaskName }}</span>
+          <button class="btn-stop-task" @click="setTracking('stopped')">⏹ Stop</button>
+        </div>
+
+        <!-- Projects Grid -->
+        <div class="projects-grid">
+          <div v-for="project in projects.filter(p => showArchivedProjects ? true : !p.archived)" :key="project.id"
+            class="project-card-premium"
+            :class="{ 'project-card-expanded': selectedProjectId === project.id, 'project-archived': project.archived }"
+            :style="project.archived ? 'opacity: 0.8; border-style: dashed;' : ''">
+
+            <!-- Card Header -->
+            <div class="project-card-header"
+              @click="selectedProjectId = selectedProjectId === project.id ? null : project.id; if (selectedProjectId) loadTasks(selectedProjectId);">
+              <div class="project-card-identity">
+                <span class="project-color-bar" :style="{ background: project.color }"></span>
+                <div class="project-card-info">
+                  <h3 class="project-card-name" style="display: flex; align-items: center; gap: 6px;">
+                    {{ project.name }}
+                    <span v-if="project.archived" style="font-size: 0.65rem; background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; color: var(--text-muted);">Archived</span>
+                  </h3>
+                  <span class="project-card-meta">
+                    {{ selectedProjectId === project.id ? tasks.length + ' task(s)' : 'Click to expand' }}
+                  </span>
+                </div>
+              </div>
+              <div class="project-card-actions">
+                <button class="project-action-btn" @click.stop="editingProject = { ...project }" title="Edit">✏️</button>
+                <button v-if="!project.archived" class="project-action-btn" @click.stop="archiveProject(project.id)" title="Archive">📦</button>
+                <button v-else class="project-action-btn" @click.stop="unarchiveProject(project.id)" title="Restore">🔄</button>
+                <button class="project-action-btn project-action-danger" @click.stop="deleteProject(project.id)" title="Delete">🗑️</button>
+                <span class="project-chevron" :class="{ 'chevron-open': selectedProjectId === project.id }">›</span>
+              </div>
+            </div>
+
+            <!-- Edit Project Inline -->
+            <div v-if="editingProject?.id === project.id" class="project-edit-form">
+              <input v-model="editingProject.name" class="project-name-input" placeholder="Project name" />
+              <input v-model="editingProject.color" type="color" style="width: 36px; height: 32px; border: none; cursor: pointer; border-radius: 6px;" />
+              <button class="btn-primary" style="font-size: 13px;" @click="updateProject(editingProject.id, editingProject.name, editingProject.color)">Save</button>
+              <button class="btn-cancel" @click="editingProject = null">Cancel</button>
+            </div>
+
+            <!-- Tasks Expanded Panel -->
+            <div v-if="selectedProjectId === project.id" class="project-tasks-panel">
+              <!-- Task Filter controls -->
+              <div class="task-filters-row" style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+                <button :class="['project-action-btn', taskStatusFilter === 'all' ? 'active-filter-btn' : '']" style="padding: 4px 12px; font-size: 0.8rem;" @click="taskStatusFilter = 'all'">All</button>
+                <button :class="['project-action-btn', taskStatusFilter === 'active' ? 'active-filter-btn' : '']" style="padding: 4px 12px; font-size: 0.8rem;" @click="taskStatusFilter = 'active'">Active</button>
+                <button :class="['project-action-btn', taskStatusFilter === 'done' ? 'active-filter-btn' : '']" style="padding: 4px 12px; font-size: 0.8rem;" @click="taskStatusFilter = 'done'">Done</button>
+              </div>
+
+              <div class="task-list">
+                <div v-if="tasks.length === 0" class="task-empty-state">No tasks yet — add one below</div>
+                <div v-for="task in tasks.filter(t => taskStatusFilter === 'all' ? true : taskStatusFilter === 'active' ? t.status !== 'done' : t.status === 'done')" :key="task.id"
+                  class="task-row"
+                  :class="{ 'task-row-active': activeTaskId === task.id, 'task-row-done': task.status === 'done' }"
+                  style="display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; margin-bottom: 6px;">
+
+                  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
+                      <button class="task-check-btn" @click="updateTask(task.id, task.name, task.status === 'done' ? 'active' : 'done')">
+                        {{ task.status === 'done' ? '✅' : '⭕' }}
+                      </button>
+                      <template v-if="editingTask?.id !== task.id">
+                        <span class="task-name" :class="{ 'task-name-done': task.status === 'done' }" style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                          {{ task.name }}
+                        </span>
+                        <span style="font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; font-weight: 500; margin-left: 6px; white-space: nowrap;">
+                          ({{ formatTime(dailyTaskSummary.find(d => d.task_id === task.id)?.total_seconds || 0) }})
+                        </span>
+                      </template>
+                      <template v-else>
+                        <input v-model="editingTask.name" class="task-edit-input" style="flex: 1; padding: 4px 8px; border-radius: 4px;"
+                          @keyup.enter="updateTask(editingTask.id, editingTask.name, editingTask.status)" />
+                      </template>
+                    </div>
+
+                    <div class="task-row-actions" style="display: flex; gap: 6px; align-items: center;">
+                      <template v-if="editingTask?.id !== task.id">
+                        <button v-if="activeTaskId !== task.id || trackingStatus !== 'running'" class="task-track-btn" @click="setActiveTask(task.id)">▶ Track</button>
+                        <button v-else class="task-stop-btn" @click="setTracking('stopped')">⏹ Stop</button>
+                        <button class="project-action-btn" style="padding: 2px 6px; font-size: 0.8rem;" @click="showRulesForTaskId = showRulesForTaskId === task.id ? null : task.id; if (showRulesForTaskId) loadTaskRules(task.id);" title="Auto-Assignment Rules">⚙️ Rules</button>
+                        <button class="project-action-btn" @click="editingTask = { ...task }" title="Edit">✏️</button>
+                        <button class="project-action-btn project-action-danger" @click="deleteTask(task.id)" title="Delete">🗑️</button>
+                      </template>
+                      <template v-else>
+                        <button class="btn-primary" style="font-size: 12px; padding: 4px 10px;"
+                          @click="updateTask(editingTask.id, editingTask.name, editingTask.status)">Save</button>
+                        <button class="btn-cancel" @click="editingTask = null">✕</button>
+                      </template>
+                    </div>
+                  </div>
+
+                  <!-- Task Auto-Assignment Rules Panel -->
+                  <div v-if="showRulesForTaskId === task.id" class="task-rules-panel" style="margin-top: 6px; padding: 8px 12px; background: var(--bg-secondary); border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem;">
+                    <div style="font-weight: 600; margin-bottom: 6px; color: var(--text);">🤖 Auto-assignment Rules</div>
+                    <div v-if="taskRules.length === 0" style="color: var(--text-muted); font-size: 0.75rem; margin-bottom: 8px;">No auto-assignment rules for this task.</div>
+                    <div v-else style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;">
+                      <div v-for="rule in taskRules" :key="rule.id" style="display: flex; align-items: center; justify-content: space-between; background: var(--card-bg); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
+                        <span style="font-family: monospace;">App: <strong>{{ rule.app_name }}</strong> <span v-if="rule.window_pattern" style="color: var(--text-muted);"> (Title: "{{ rule.window_pattern }}")</span></span>
+                        <button @click="deleteTaskRule(rule.id, task.id)" style="background: none; border: none; color: var(--danger); cursor: pointer; font-size: 0.8rem; padding: 2px;">✕</button>
+                      </div>
+                    </div>
+                    <!-- Add Rule form -->
+                    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                      <input v-model="newTaskRuleAppName" placeholder="App process (e.g. Code, chrome)" style="flex: 1; min-width: 140px; padding: 4px 8px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color);" />
+                      <input v-model="newTaskRulePattern" placeholder="Window title pattern (optional)" style="flex: 1; min-width: 140px; padding: 4px 8px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color);" />
+                      <button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.75rem;" @click="createTaskRule(task.id)">+ Add Rule</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Add Task -->
+              <div class="task-add-area">
+                <template v-if="showTaskForm && selectedProjectId === project.id">
+                  <input v-model="newTaskName" placeholder="New task name…" class="task-add-input"
+                    @keyup.enter="createTask(project.id)" />
+                  <button class="btn-primary" style="font-size: 13px; padding: 6px 14px;"
+                    @click="createTask(project.id)" :disabled="!newTaskName.trim()">Add</button>
+                  <button class="btn-cancel" @click="showTaskForm = false; newTaskName = ''">✕</button>
+                </template>
+                <button v-else class="task-add-btn"
+                  @click="showTaskForm = true; selectedProjectId = project.id; loadTasks(project.id);">+ Add Task</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div v-if="projects.filter(p => showArchivedProjects ? true : !p.archived).length === 0 && !showProjectForm" class="projects-empty-state">
+          <div class="empty-state-icon">📁</div>
+          <h3>No projects yet</h3>
+          <p>Create your first project to start tracking time against tasks.</p>
+          <button class="btn-primary" @click="showProjectForm = true">+ Create Project</button>
+        </div>
+      </div>
+
+      <!-- TIMESHEET VIEW -->
+      <div v-if="currentView === 'timesheet'" class="view-timesheet">
+        <header class="view-header" style="flex-wrap: wrap; gap: 12px;">
+          <h1>📅 {{ t('message.timesheet') }}</h1>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <!-- Date range presets -->
+            <button class="project-action-btn" style="padding: 6px 12px; font-size: 0.8rem;" @click="setTimesheetPreset('today')">Today</button>
+            <button class="project-action-btn" style="padding: 6px 12px; font-size: 0.8rem;" @click="setTimesheetPreset('week')">This Week</button>
+            <button class="project-action-btn" style="padding: 6px 12px; font-size: 0.8rem;" @click="setTimesheetPreset('last_week')">Last Week</button>
+            <button class="project-action-btn" style="padding: 6px 12px; font-size: 0.8rem;" @click="setTimesheetPreset('month')">This Month</button>
+            
+            <input type="date" v-model="timesheetDateRange.from" @change="loadTimesheetData(timesheetDateRange.from, timesheetDateRange.to)" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-size: 0.8rem;" />
+            <span style="color: var(--text-muted);">to</span>
+            <input type="date" v-model="timesheetDateRange.to" @change="loadTimesheetData(timesheetDateRange.from, timesheetDateRange.to)" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-size: 0.8rem;" />
+            
+            <button v-if="timesheetData.length > 0" class="btn btn-primary" style="padding: 6px 12px; font-size: 0.85rem; border-radius: 8px;" @click="exportTimesheetCSV">
+              📥 Export CSV
+            </button>
+          </div>
+        </header>
+
+        <div class="card" style="overflow-x: auto; margin-bottom: 16px;">
+          <table v-if="timesheetData.length > 0" class="timesheet-table">
+            <thead>
+              <tr>
+                <th style="text-align: left; padding: 10px 14px;">Project</th>
+                <th style="text-align: left; padding: 10px 14px;">Task</th>
+                <th style="text-align: left; padding: 10px 14px;">Date</th>
+                <th style="text-align: right; padding: 10px 14px;">Total</th>
+                <th style="text-align: right; padding: 10px 14px; width: 80px;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(cell, idx) in timesheetData" :key="idx">
+                <td style="padding: 10px 14px;">
+                  <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px;" :style="{ background: cell.project_color }"></span>
+                  {{ cell.project_name }}
+                </td>
+                <td style="padding: 10px 14px;">{{ cell.task_name }}</td>
+                <td style="padding: 10px 14px; color: var(--text-muted); font-size: 13px;">{{ cell.date }}</td>
+                <td style="padding: 10px 14px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;">{{ formatTime(cell.seconds) }}</td>
+                <td style="padding: 6px 14px; text-align: right;">
+                  <button v-if="activeTaskId !== cell.task_id || trackingStatus !== 'running'" class="task-track-btn" style="padding: 2px 6px; font-size: 0.75rem;" @click="setActiveTask(cell.task_id)">▶ Track</button>
+                  <button v-else class="task-stop-btn" style="padding: 2px 6px; font-size: 0.75rem;" @click="setTracking('stopped')">⏹ Stop</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else style="text-align: center; padding: 40px; color: var(--text-muted);">No timesheet data for this period.</div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin: 0 0 14px 0; font-size: 14px; font-weight: 700;">Daily Breakdown</h3>
+          <div v-for="entry in dailyTaskSummary" :key="entry.task_id || 'untracked'" style="display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border-color);">
+            <span style="flex: 1; font-size: 13px;" :style="{ color: entry.task_id ? 'var(--text-color)' : 'var(--text-muted)' }">{{ entry.task_name }}</span>
+            <span v-if="entry.project_name" style="font-size: 11px; color: var(--text-muted);">({{ entry.project_name }})</span>
+            <span style="font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600;">{{ formatTime(entry.total_seconds) }}</span>
+            <div style="width: 80px; text-align: right;">
+              <template v-if="entry.task_id">
+                <button v-if="activeTaskId !== entry.task_id || trackingStatus !== 'running'" class="task-track-btn" style="padding: 2px 6px; font-size: 0.75rem;" @click="setActiveTask(entry.task_id)">▶ Track</button>
+                <button v-else class="task-stop-btn" style="padding: 2px 6px; font-size: 0.75rem;" @click="setTracking('stopped')">⏹ Stop</button>
+              </template>
+            </div>
+          </div>
+          <div v-if="dailyTaskSummary.length === 0" style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No data for today</div>
         </div>
       </div>
 
@@ -6822,38 +7404,48 @@ select {
 }
 .calendar-productivity-layout.has-calendar {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 380px 1fr;
 }
 
 .calendar-sidebar-card {
-  padding: 20px;
-  border-radius: 16px;
+  padding: 18px;
+  border-radius: 18px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   position: sticky;
   top: 24px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
 }
 
 .calendar-sidebar-header {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 .calendar-sidebar-header .btn-today {
   width: 100%;
-  padding: 8px;
-  border-radius: 8px;
+  padding: 9px;
+  border-radius: 10px;
   font-weight: 600;
+  font-size: 0.88rem;
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(99,102,241,0.04));
+  border: 1px solid rgba(99,102,241,0.2);
+  color: var(--accent);
+  transition: all 0.2s;
+}
+.calendar-sidebar-header .btn-today:hover {
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(99,102,241,0.08));
+  border-color: var(--accent);
 }
 .month-selector {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(0,0,0,0.02);
-  border-radius: 8px;
-  padding: 4px;
+  background: var(--bg-color);
+  border-radius: 10px;
+  padding: 4px 6px;
   border: 1px solid var(--border-color);
 }
 .month-selector .btn-nav {
@@ -6861,33 +7453,37 @@ select {
   border: none;
   color: var(--text-color);
   cursor: pointer;
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  border-radius: 6px;
-  transition: all 0.2s;
+  padding: 5px 10px;
+  font-size: 0.85rem;
+  border-radius: 7px;
+  transition: all 0.15s;
+  line-height: 1;
 }
 .month-selector .btn-nav:hover {
   background: var(--border-color);
 }
 .month-selector .current-month {
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   color: var(--text-color);
+  letter-spacing: -0.01em;
 }
 
 .calendar-weekdays-container {
   display: grid !important;
   grid-template-columns: repeat(7, 1fr) !important;
   text-align: center;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: var(--text-muted);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .calendar-grid-container {
   display: grid !important;
   grid-template-columns: repeat(7, 1fr) !important;
-  gap: 6px !important;
+  gap: 3px !important;
   width: 100% !important;
 }
 .calendar-sidebar-card .calendar-cell {
@@ -6895,36 +7491,61 @@ select {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
-  border-radius: 10px;
-  padding: 6px 2px;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  padding: 2px 1px;
   cursor: pointer;
   border: 2px solid transparent;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  min-width: 0;
+}
+.calendar-sidebar-card .calendar-cell:not(.calendar-cell-empty):hover {
+  background: rgba(99, 102, 241, 0.08) !important;
+  border-color: rgba(99, 102, 241, 0.2) !important;
+  transform: scale(1.05);
+  z-index: 1;
 }
 .calendar-sidebar-card .calendar-cell-empty {
   cursor: default;
   background: transparent !important;
+  border: none;
 }
 .calendar-sidebar-card .calendar-day-num {
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   font-weight: 700;
+  line-height: 1.1;
 }
 .calendar-sidebar-card .calendar-day-bar {
-  font-size: 0.55rem;
+  font-size: 0.5rem;
   font-weight: 600;
-  opacity: 0.8;
-  margin-top: 2px;
+  opacity: 0.85;
+  margin-top: 1px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  max-width: 100%;
+  text-align: center;
 }
 .calendar-sidebar-card .calendar-cell-today {
-  border: 2px dashed var(--accent) !important;
+  border: 2px solid var(--accent) !important;
+  background: rgba(99, 102, 241, 0.06) !important;
   font-weight: 800;
+}
+.calendar-sidebar-card .calendar-cell-today .calendar-day-num {
+  color: var(--accent);
 }
 .calendar-sidebar-card .calendar-cell-selected {
   background: var(--accent) !important;
   color: #ffffff !important;
   border-color: var(--accent) !important;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 3px 10px rgba(99, 102, 241, 0.35);
+  transform: scale(1.06);
+  z-index: 2;
+}
+.calendar-sidebar-card .calendar-cell-selected .calendar-day-num {
+  color: #ffffff !important;
 }
 .calendar-sidebar-card .calendar-cell-selected .calendar-day-bar {
   color: rgba(255, 255, 255, 0.9) !important;
@@ -7139,4 +7760,273 @@ select {
   transform: none !important;
   box-shadow: none !important;
 }
+
+/* ─── CSS Variable Aliases (new feature compat) ────────────────────────── */
+:root {
+  --border: var(--border-color);
+  --bg-secondary: var(--bg-color);
+  --text: var(--text-color);
+  --primary: var(--accent);
+}
+
+.active-filter-btn {
+  background: var(--accent) !important;
+  color: white !important;
+  border-color: var(--accent) !important;
+}
+
+/* ─── Utility Button Classes ────────────────────────────────────── */
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background 0.15s;
+  color: var(--text-color);
+}
+.btn-icon:hover { background: var(--border-color); }
+
+.btn-text {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-family: inherit;
+  transition: color 0.15s, background 0.15s;
+}
+.btn-text:hover { color: var(--accent); background: rgba(99,102,241,0.06); }
+
+.btn-cancel {
+  background: none;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-cancel:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ─── Projects View ──────────────────────────────────────────────── */
+.view-projects { padding: 0; }
+
+.projects-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.projects-count-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(99,102,241,0.1);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.btn-new-project {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+  box-shadow: 0 2px 8px rgba(99,102,241,0.25);
+}
+.btn-new-project:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+}
+
+.project-create-form {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+  animation: slideDown 0.2s ease;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.project-form-inner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.form-color-preview { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; transition: background 0.2s; box-shadow: 0 0 0 2px rgba(0,0,0,0.08); }
+.project-name-input {
+  flex: 1; min-width: 180px; padding: 9px 14px;
+  border-radius: 8px; border: 1px solid var(--border-color);
+  background: var(--bg-color); color: var(--text-color);
+  font-size: 14px; font-family: inherit; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.project-name-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+.color-picker-label { cursor: pointer; font-size: 18px; padding: 4px 8px; border-radius: 8px; transition: background 0.15s; position: relative; }
+.color-picker-label:hover { background: var(--border-color); }
+
+/* Active Task Banner */
+.active-task-banner {
+  display: flex; align-items: center; gap: 12px;
+  background: linear-gradient(135deg, rgba(34,197,94,0.08), rgba(16,185,129,0.06));
+  border: 1px solid rgba(34,197,94,0.25); border-left: 4px solid #22c55e;
+  border-radius: 12px; padding: 11px 16px; margin-bottom: 20px;
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.active-pulse {
+  width: 10px; height: 10px; border-radius: 50%; background: #22c55e;
+  animation: pulse 1.5s infinite; flex-shrink: 0;
+}
+.active-task-label { font-weight: 700; color: #22c55e; font-size: 13px; }
+.active-task-name { font-weight: 600; color: var(--text-color); font-size: 14px; flex: 1; }
+.btn-stop-task {
+  background: rgba(239,68,68,0.1); color: #ef4444;
+  border: 1px solid rgba(239,68,68,0.25); border-radius: 8px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.btn-stop-task:hover { background: rgba(239,68,68,0.2); }
+
+/* Projects Grid */
+.projects-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+/* Premium Project Card */
+.project-card-premium {
+  background: var(--card-bg); border: 1px solid var(--border-color);
+  border-radius: 14px; overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.project-card-premium:hover { border-color: var(--accent); box-shadow: 0 4px 16px rgba(99,102,241,0.12); }
+.project-card-expanded { border-color: var(--accent); box-shadow: 0 4px 20px rgba(99,102,241,0.1) !important; }
+
+.project-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; cursor: pointer; user-select: none; gap: 12px;
+}
+.project-card-identity { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
+.project-color-bar { width: 4px; height: 36px; border-radius: 4px; flex-shrink: 0; transition: width 0.2s; }
+.project-card-premium:hover .project-color-bar, .project-card-expanded .project-color-bar { width: 5px; }
+.project-card-info { min-width: 0; flex: 1; }
+.project-card-name { margin: 0 0 2px; font-size: 16px; font-weight: 700; color: var(--text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-card-meta { font-size: 12px; color: var(--text-muted); }
+.project-card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.project-action-btn {
+  background: var(--bg-secondary); border: 1px solid var(--border-color); cursor: pointer; font-size: 13px;
+  padding: 6px 10px; border-radius: 8px; line-height: 1;
+  transition: all 0.15s; color: var(--text-color);
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+}
+.project-action-btn:hover { background: var(--border-color); border-color: var(--text-muted); transform: translateY(-1px); }
+.project-action-danger:hover { background: rgba(239,68,68,0.1) !important; border-color: rgba(239,68,68,0.4) !important; color: #ef4444; }
+.project-chevron { font-size: 20px; color: var(--text-muted); transition: transform 0.25s cubic-bezier(0.4,0,0.2,1); display: inline-block; line-height: 1; margin-left: 4px; }
+.chevron-open { transform: rotate(90deg); }
+
+/* Edit form */
+.project-edit-form {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+  background: var(--bg-color); border-top: 1px solid var(--border-color); flex-wrap: wrap;
+}
+
+/* Tasks Panel */
+.project-tasks-panel { border-top: 1px solid var(--border-color); padding: 16px 20px; background: rgba(99,102,241,0.01); }
+.task-list { padding: 4px 0; }
+.task-empty-state { padding: 14px 16px; text-align: center; color: var(--text-muted); font-size: 13px; font-style: italic; }
+.task-row {
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+  transition: all 0.12s; border-left: 3px solid transparent;
+  border-radius: 8px; border: 1px solid var(--border-color);
+  background: var(--card-bg); margin-bottom: 8px;
+}
+.task-row:hover { background: rgba(99,102,241,0.02); border-color: var(--accent); }
+.task-row-active { background: rgba(34,197,94,0.04) !important; border-color: rgba(34,197,94,0.3) !important; border-left-color: #22c55e !important; }
+.task-row-done { opacity: 0.55; background: var(--bg-secondary) !important; }
+.task-check-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 0; line-height: 1; flex-shrink: 0; transition: transform 0.15s; }
+.task-check-btn:hover { transform: scale(1.15); }
+.task-name { flex: 1; font-size: 14px; color: var(--text-color); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-name-done { text-decoration: line-through; color: var(--text-muted); }
+.task-row-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.task-track-btn {
+  background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid rgba(34,197,94,0.25);
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.task-track-btn:hover { background: rgba(34,197,94,0.2); transform: translateY(-1px); }
+.task-stop-btn {
+  background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.25);
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.task-stop-btn:hover { background: rgba(239,68,68,0.2); transform: translateY(-1px); }
+.task-edit-input {
+  flex: 1; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border-color); background: var(--bg-color);
+  color: var(--text-color); font-size: 13px; font-family: inherit; outline: none;
+}
+.task-edit-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99,102,241,0.12); }
+
+/* Task Add Area */
+.task-add-area {
+  padding: 8px 0 0 0; border-top: 1px solid var(--border-color);
+  display: flex; align-items: center; gap: 8px;
+  background: transparent;
+}
+.task-add-input {
+  flex: 1; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--border-color); background: var(--bg-color);
+  color: var(--text-color); font-size: 13px; font-family: inherit; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.task-add-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+.task-add-btn {
+  background: var(--card-bg); border: 1px dashed var(--border-color); color: var(--accent);
+  font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+  padding: 8px 16px; border-radius: 8px; width: 100%; transition: all 0.15s; text-align: center;
+}
+.task-add-btn:hover { background: rgba(99,102,241,0.04); border-color: var(--accent); }
+
+/* Task Auto-Assignment Rules Panel */
+.task-rules-panel {
+  width: 100%;
+  animation: slideDown 0.15s ease-out;
+}
+
+/* Empty State */
+.projects-empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 80px 24px; color: var(--text-muted); gap: 12px;
+}
+.empty-state-icon { font-size: 48px; margin-bottom: 4px; opacity: 0.6; }
+.projects-empty-state h3 { font-size: 20px; font-weight: 700; color: var(--text-color); margin: 0; }
+.projects-empty-state p { font-size: 14px; max-width: 360px; line-height: 1.6; margin: 0 0 8px; }
+
+/* ─── Timesheet Styles ──────────────────────────────────────────── */
+.timesheet-table { width: 100%; border-collapse: collapse; }
+.timesheet-table th {
+  border-bottom: 2px solid var(--border-color); font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;
+}
+.timesheet-table td { border-bottom: 1px solid var(--border-color); }
+.timesheet-table tr:last-child td { border-bottom: none; }
+.timesheet-table tr:hover td { background: var(--bg-color); }
 </style>

@@ -136,6 +136,43 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
             app_name TEXT PRIMARY KEY,
             category TEXT NOT NULL DEFAULT 'neutral'
         );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL DEFAULT '#3b82f6',
+            archived BOOLEAN NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT,
+            synced_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT,
+            synced_at TEXT,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS task_rules (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            app_name TEXT NOT NULL,
+            window_pattern TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            synced_at TEXT,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        );
         ",
     )?;
 
@@ -186,6 +223,16 @@ pub fn init_db(app: &AppHandle) -> Result<()> {
             let _ = conn.execute(sql, []);
         }
     }
+
+    // Project/Task feature migrations
+    let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN task_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN task_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN task_tracking_enabled INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN task_auto_detect_enabled INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN task_show_in_overlay INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN task_show_in_tray INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN task_timesheet_week_start TEXT NOT NULL DEFAULT 'monday'", []);
+    let _ = conn.execute("ALTER TABLE settings ADD COLUMN task_show_untracked INTEGER NOT NULL DEFAULT 1", []);
 
     // Other table migrations
     let _ = conn.execute("ALTER TABLE time_logs ADD COLUMN status TEXT NOT NULL DEFAULT 'active'", []);
@@ -264,6 +311,12 @@ pub struct Settings {
     pub break_long_enabled: bool,
     pub break_allow_force_exit: bool,
     pub break_bg_color: String,
+    pub task_tracking_enabled: bool,
+    pub task_auto_detect_enabled: bool,
+    pub task_show_in_overlay: bool,
+    pub task_show_in_tray: bool,
+    pub task_timesheet_week_start: String,
+    pub task_show_untracked: bool,
 }
 
 pub fn get_settings(app: &AppHandle) -> Result<Settings> {
@@ -273,7 +326,7 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
     let user_id = crate::tracking::get_active_user_id();
     
     // Try to get settings for the active user
-    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1), COALESCE(break_reminder_enabled, 0), COALESCE(break_mini_interval_minutes, 20), COALESCE(break_mini_duration_seconds, 20), COALESCE(break_long_duration_seconds, 300), COALESCE(break_mini_breaks_before_long, 4), COALESCE(break_postpone_limit, 3), COALESCE(break_postpone_duration_minutes, 2), COALESCE(break_pre_notification_seconds, 10), COALESCE(break_sound_volume, 50), COALESCE(break_ideas_enabled, 1), COALESCE(break_fullscreen, 1), COALESCE(break_mini_enabled, 1), COALESCE(break_long_enabled, 1), COALESCE(break_allow_force_exit, 1), COALESCE(break_bg_color, '#0f172a') FROM settings WHERE user_id = ?1 LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT language, theme, auto_start_on_boot, screenshot_interval, screenshot_location, backup_frequency, backup_location, COALESCE(idle_threshold, 5), COALESCE(idle_monitor_mouse, 1), COALESCE(idle_monitor_keyboard, 1), COALESCE(is_screenshot_enabled, 1), COALESCE(overlay_enabled, 0), COALESCE(overlay_always_on_top, 0), COALESCE(overlay_click_through, 0), COALESCE(overlay_position_x, 100), COALESCE(overlay_position_y, 100), COALESCE(pomodoro_focus_minutes, 25), COALESCE(pomodoro_short_break_minutes, 5), COALESCE(pomodoro_long_break_minutes, 15), COALESCE(pomodoro_sessions_before_long, 4), COALESCE(pomodoro_auto_start, 1), COALESCE(pomodoro_sound_enabled, 1), COALESCE(break_reminder_enabled, 0), COALESCE(break_mini_interval_minutes, 20), COALESCE(break_mini_duration_seconds, 20), COALESCE(break_long_duration_seconds, 300), COALESCE(break_mini_breaks_before_long, 4), COALESCE(break_postpone_limit, 3), COALESCE(break_postpone_duration_minutes, 2), COALESCE(break_pre_notification_seconds, 10), COALESCE(break_sound_volume, 50), COALESCE(break_ideas_enabled, 1), COALESCE(break_fullscreen, 1), COALESCE(break_mini_enabled, 1), COALESCE(break_long_enabled, 1), COALESCE(break_allow_force_exit, 1), COALESCE(break_bg_color, '#0f172a'), COALESCE(task_tracking_enabled, 1), COALESCE(task_auto_detect_enabled, 1), COALESCE(task_show_in_overlay, 0), COALESCE(task_show_in_tray, 1), COALESCE(task_timesheet_week_start, 'monday'), COALESCE(task_show_untracked, 1) FROM settings WHERE user_id = ?1 LIMIT 1")?;
     
     let result = stmt.query_row(params![user_id], |row| {
         Ok(Settings {
@@ -314,6 +367,12 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
             break_long_enabled: row.get::<_, i32>(34)? != 0,
             break_allow_force_exit: row.get::<_, i32>(35)? != 0,
             break_bg_color: row.get(36)?,
+            task_tracking_enabled: row.get::<_, i32>(37)? != 0,
+            task_auto_detect_enabled: row.get::<_, i32>(38)? != 0,
+            task_show_in_overlay: row.get::<_, i32>(39)? != 0,
+            task_show_in_tray: row.get::<_, i32>(40)? != 0,
+            task_timesheet_week_start: row.get(41)?,
+            task_show_untracked: row.get::<_, i32>(42)? != 0,
         })
     });
 
@@ -371,6 +430,12 @@ pub fn get_settings(app: &AppHandle) -> Result<Settings> {
                 break_long_enabled: true,
                 break_allow_force_exit: true,
                 break_bg_color: "#0f172a".to_string(),
+                task_tracking_enabled: true,
+                task_auto_detect_enabled: true,
+                task_show_in_overlay: false,
+                task_show_in_tray: true,
+                task_timesheet_week_start: "monday".to_string(),
+                task_show_untracked: true,
             })
         }
         Err(e) => Err(e),
@@ -421,8 +486,14 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             break_long_enabled = ?35,
             break_allow_force_exit = ?36,
             break_bg_color = ?37,
-            updated_at = ?38 
-        WHERE user_id = ?39",
+            task_tracking_enabled = ?38,
+            task_auto_detect_enabled = ?39,
+            task_show_in_overlay = ?40,
+            task_show_in_tray = ?41,
+            task_timesheet_week_start = ?42,
+            task_show_untracked = ?43,
+            updated_at = ?44 
+        WHERE user_id = ?45",
         params![
             settings.language,
             settings.theme,
@@ -461,6 +532,12 @@ pub fn update_settings(app: &AppHandle, settings: Settings) -> Result<()> {
             settings.break_long_enabled as i32,
             settings.break_allow_force_exit as i32,
             settings.break_bg_color,
+            settings.task_tracking_enabled as i32,
+            settings.task_auto_detect_enabled as i32,
+            settings.task_show_in_overlay as i32,
+            settings.task_show_in_tray as i32,
+            settings.task_timesheet_week_start,
+            settings.task_show_untracked as i32,
             now,
             crate::tracking::get_active_user_id()
         ],
@@ -771,13 +848,19 @@ pub struct TimeLogEntry {
     pub end_time: String,
     pub duration: i64,
     pub status: String,
+    pub task_id: Option<String>,
+    pub task_name: Option<String>,
 }
 
 pub fn get_time_logs_range(app: &AppHandle, user_id: &str, from: &str, to: &str, limit: u32, offset: u32) -> Result<Vec<TimeLogEntry>> {
     let db_path = get_db_path(app);
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, app_name, window_title, start_time, COALESCE(end_time,''), COALESCE(duration,0), COALESCE(status,'active') FROM time_logs WHERE user_id=?1 AND date(start_time) >= ?2 AND date(start_time) <= ?3 ORDER BY start_time DESC LIMIT ?4 OFFSET ?5"
+        "SELECT tl.id, tl.app_name, tl.window_title, tl.start_time, COALESCE(tl.end_time,''), COALESCE(tl.duration,0), COALESCE(tl.status,'active'), tl.task_id, tk.name
+         FROM time_logs tl
+         LEFT JOIN tasks tk ON tl.task_id = tk.id
+         WHERE tl.user_id=?1 AND date(tl.start_time) >= ?2 AND date(tl.start_time) <= ?3
+         ORDER BY tl.start_time DESC LIMIT ?4 OFFSET ?5"
     )?;
     let rows = stmt.query_map(params![user_id, from, to, limit, offset], |row| {
         Ok(TimeLogEntry {
@@ -788,6 +871,8 @@ pub fn get_time_logs_range(app: &AppHandle, user_id: &str, from: &str, to: &str,
             end_time: row.get(4)?,
             duration: row.get(5)?,
             status: row.get(6)?,
+            task_id: row.get(7)?,
+            task_name: row.get(8)?,
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -1078,5 +1163,395 @@ pub fn get_all_app_categories(app: &AppHandle) -> Result<Vec<AppCategoryEntry>> 
         results.push(row?);
     }
     Ok(results)
+}
+
+// ─── Projects & Tasks ────────────────────────────────────────────
+
+static ACTIVE_TASK_ID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub archived: bool,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Task {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TaskRule {
+    pub id: String,
+    pub task_id: String,
+    pub app_name: String,
+    pub window_pattern: Option<String>,
+}
+
+pub fn get_active_task_id() -> Option<String> {
+    ACTIVE_TASK_ID.lock().unwrap().clone()
+}
+
+pub fn set_active_task_id(task_id: Option<String>) {
+    *ACTIVE_TASK_ID.lock().unwrap() = task_id;
+}
+
+pub fn create_project(app: &AppHandle, name: &str, color: &str) -> Result<Project> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let user_id = crate::tracking::get_active_user_id();
+    conn.execute(
+        "INSERT INTO projects (id, user_id, name, color, archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
+        params![id, user_id, name, color, now],
+    )?;
+    Ok(Project { id, name: name.to_string(), color: color.to_string(), archived: false, created_at: now })
+}
+
+pub fn list_projects(app: &AppHandle) -> Result<Vec<Project>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    let mut stmt = conn.prepare(
+        "SELECT id, name, color, archived, created_at FROM projects WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY created_at DESC"
+    )?;
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok(Project {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            color: row.get(2)?,
+            archived: row.get::<_, i32>(3)? != 0,
+            created_at: row.get(4)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn update_project(app: &AppHandle, id: &str, name: Option<&str>, color: Option<&str>, archived: Option<bool>) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Some(name) = name {
+        conn.execute("UPDATE projects SET name = ?1, updated_at = ?2 WHERE id = ?3", params![name, now, id])?;
+    }
+    if let Some(color) = color {
+        conn.execute("UPDATE projects SET color = ?1, updated_at = ?2 WHERE id = ?3", params![color, now, id])?;
+    }
+    if let Some(archived) = archived {
+        conn.execute("UPDATE projects SET archived = ?1, updated_at = ?2 WHERE id = ?3", params![archived as i32, now, id])?;
+    }
+    Ok(())
+}
+
+pub fn delete_project(app: &AppHandle, id: &str) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute("UPDATE projects SET deleted_at = ?1 WHERE id = ?2", params![now, id])?;
+    conn.execute("UPDATE tasks SET deleted_at = ?1 WHERE project_id = ?2", params![now, id])?;
+    Ok(())
+}
+
+pub fn create_task(app: &AppHandle, project_id: &str, name: &str) -> Result<Task> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let user_id = crate::tracking::get_active_user_id();
+    conn.execute(
+        "INSERT INTO tasks (id, project_id, user_id, name, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
+        params![id, project_id, user_id, name, now],
+    )?;
+    Ok(Task { id, project_id: project_id.to_string(), name: name.to_string(), status: "active".to_string(), created_at: now })
+}
+
+pub fn list_tasks(app: &AppHandle, project_id: Option<&str>) -> Result<Vec<Task>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    let (query, rows_result) = if let Some(pid) = project_id {
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, name, status, created_at FROM tasks WHERE user_id = ?1 AND project_id = ?2 AND deleted_at IS NULL ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map(params![user_id, pid], |row| {
+            Ok(Task {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                status: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        (true, rows.filter_map(|r| r.ok()).collect())
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, name, status, created_at FROM tasks WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map(params![user_id], |row| {
+            Ok(Task {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                status: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        (false, rows.filter_map(|r| r.ok()).collect())
+    };
+    let _ = query;
+    Ok(rows_result)
+}
+
+pub fn update_task(app: &AppHandle, id: &str, name: Option<&str>, status: Option<&str>) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Some(name) = name {
+        conn.execute("UPDATE tasks SET name = ?1, updated_at = ?2 WHERE id = ?3", params![name, now, id])?;
+    }
+    if let Some(status) = status {
+        conn.execute("UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3", params![status, now, id])?;
+    }
+    Ok(())
+}
+
+pub fn delete_task(app: &AppHandle, id: &str) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute("UPDATE tasks SET deleted_at = ?1 WHERE id = ?2", params![now, id])?;
+    Ok(())
+}
+
+pub fn create_task_rule(app: &AppHandle, task_id: &str, app_name: &str, window_pattern: Option<&str>) -> Result<TaskRule> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let user_id = crate::tracking::get_active_user_id();
+    conn.execute(
+        "INSERT INTO task_rules (id, task_id, user_id, app_name, window_pattern, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![id, task_id, user_id, app_name, window_pattern, now],
+    )?;
+    Ok(TaskRule { id, task_id: task_id.to_string(), app_name: app_name.to_string(), window_pattern: window_pattern.map(|s| s.to_string()) })
+}
+
+pub fn list_task_rules(app: &AppHandle, task_id: Option<&str>) -> Result<Vec<TaskRule>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    if let Some(tid) = task_id {
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, app_name, window_pattern FROM task_rules WHERE user_id = ?1 AND task_id = ?2"
+        )?;
+        let rows = stmt.query_map(params![user_id, tid], |row| {
+            Ok(TaskRule {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                app_name: row.get(2)?,
+                window_pattern: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, app_name, window_pattern FROM task_rules WHERE user_id = ?1"
+        )?;
+        let rows = stmt.query_map(params![user_id], |row| {
+            Ok(TaskRule {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                app_name: row.get(2)?,
+                window_pattern: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+}
+
+pub fn delete_task_rule(app: &AppHandle, id: &str) -> Result<()> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    conn.execute("DELETE FROM task_rules WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+pub fn match_task_by_app(app: &AppHandle, app_name: &str, window_title: &str) -> Option<String> {
+    let rules = list_task_rules(app, None).ok()?;
+    for rule in rules {
+        if rule.app_name == app_name {
+            if let Some(ref pattern) = rule.window_pattern {
+                if pattern.is_empty() || window_title.contains(pattern.as_str()) {
+                    return Some(rule.task_id);
+                }
+            } else {
+                return Some(rule.task_id);
+            }
+        }
+    }
+    None
+}
+
+// ─── Reports & Timesheet ─────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ProjectTimeSummary {
+    pub project_id: String,
+    pub project_name: String,
+    pub project_color: String,
+    pub total_seconds: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TaskTimeSummary {
+    pub task_id: String,
+    pub task_name: String,
+    pub project_id: String,
+    pub total_seconds: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TimesheetCell {
+    pub task_id: String,
+    pub task_name: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub project_color: String,
+    pub date: String,
+    pub seconds: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DailyTaskEntry {
+    pub task_id: Option<String>,
+    pub task_name: String,
+    pub project_name: Option<String>,
+    pub total_seconds: i64,
+}
+
+pub fn get_project_time_summary(app: &AppHandle, from: &str, to: &str) -> Result<Vec<ProjectTimeSummary>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.name, p.color, COALESCE(SUM(tl.duration), 0) as total
+         FROM projects p
+         LEFT JOIN tasks tk ON tk.project_id = p.id AND tk.deleted_at IS NULL
+         LEFT JOIN time_logs tl ON tl.task_id = tk.id AND tl.user_id = ?1 AND date(tl.start_time) >= ?2 AND date(tl.start_time) <= ?3
+         WHERE p.user_id = ?1 AND p.deleted_at IS NULL AND p.archived = 0
+         GROUP BY p.id
+         ORDER BY total DESC"
+    )?;
+    let rows = stmt.query_map(params![user_id, from, to], |row| {
+        Ok(ProjectTimeSummary {
+            project_id: row.get(0)?,
+            project_name: row.get(1)?,
+            project_color: row.get(2)?,
+            total_seconds: row.get(3)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn get_task_time_summary(app: &AppHandle, project_id: Option<&str>, from: &str, to: &str) -> Result<Vec<TaskTimeSummary>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    if let Some(pid) = project_id {
+        let mut stmt = conn.prepare(
+            "SELECT tk.id, tk.name, tk.project_id, COALESCE(SUM(tl.duration), 0) as total
+             FROM tasks tk
+             LEFT JOIN time_logs tl ON tl.task_id = tk.id AND tl.user_id = ?1 AND date(tl.start_time) >= ?2 AND date(tl.start_time) <= ?3
+             WHERE tk.user_id = ?1 AND tk.project_id = ?4 AND tk.deleted_at IS NULL
+             GROUP BY tk.id
+             ORDER BY total DESC"
+        )?;
+        let rows = stmt.query_map(params![user_id, from, to, pid], |row| {
+            Ok(TaskTimeSummary {
+                task_id: row.get(0)?,
+                task_name: row.get(1)?,
+                project_id: row.get(2)?,
+                total_seconds: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT tk.id, tk.name, tk.project_id, COALESCE(SUM(tl.duration), 0) as total
+             FROM tasks tk
+             LEFT JOIN time_logs tl ON tl.task_id = tk.id AND tl.user_id = ?1 AND date(tl.start_time) >= ?2 AND date(tl.start_time) <= ?3
+             WHERE tk.user_id = ?1 AND tk.deleted_at IS NULL
+             GROUP BY tk.id
+             ORDER BY total DESC"
+        )?;
+        let rows = stmt.query_map(params![user_id, from, to], |row| {
+            Ok(TaskTimeSummary {
+                task_id: row.get(0)?,
+                task_name: row.get(1)?,
+                project_id: row.get(2)?,
+                total_seconds: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+}
+
+pub fn get_timesheet_data(app: &AppHandle, from: &str, to: &str) -> Result<Vec<TimesheetCell>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    let mut stmt = conn.prepare(
+        "SELECT tl.task_id, tk.name, p.id, p.name, p.color, date(tl.start_time) as day, SUM(tl.duration)
+         FROM time_logs tl
+         JOIN tasks tk ON tl.task_id = tk.id
+         JOIN projects p ON tk.project_id = p.id
+         WHERE tl.user_id = ?1 AND tl.task_id IS NOT NULL AND date(tl.start_time) >= ?2 AND date(tl.start_time) <= ?3
+         GROUP BY tl.task_id, day
+         ORDER BY day ASC, p.name ASC, tk.name ASC"
+    )?;
+    let rows = stmt.query_map(params![user_id, from, to], |row| {
+        Ok(TimesheetCell {
+            task_id: row.get(0)?,
+            task_name: row.get(1)?,
+            project_id: row.get(2)?,
+            project_name: row.get(3)?,
+            project_color: row.get(4)?,
+            date: row.get(5)?,
+            seconds: row.get(6)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn get_daily_task_summary(app: &AppHandle, date: &str) -> Result<Vec<DailyTaskEntry>> {
+    let db_path = get_db_path(app);
+    let conn = Connection::open(&db_path)?;
+    let user_id = crate::tracking::get_active_user_id();
+    let mut stmt = conn.prepare(
+        "SELECT tl.task_id, COALESCE(tk.name, 'Untracked'), p.name, SUM(tl.duration)
+         FROM time_logs tl
+         LEFT JOIN tasks tk ON tl.task_id = tk.id
+         LEFT JOIN projects p ON tk.project_id = p.id
+         WHERE tl.user_id = ?1 AND date(tl.start_time) = ?2
+         GROUP BY tl.task_id
+         ORDER BY SUM(tl.duration) DESC"
+    )?;
+    let rows = stmt.query_map(params![user_id, date], |row| {
+        Ok(DailyTaskEntry {
+            task_id: row.get(0)?,
+            task_name: row.get(1)?,
+            project_name: row.get(2)?,
+            total_seconds: row.get(3)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 

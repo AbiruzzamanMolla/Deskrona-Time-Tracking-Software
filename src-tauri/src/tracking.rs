@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use regex::Regex;
 #[cfg(target_os = "windows")]
@@ -400,9 +400,10 @@ pub fn start_tracking(app: AppHandle) {
                         let duration = (now.naive_local() - cw.start_time.naive_local()).num_seconds();
                         if duration > 0 {
                             if let Ok(conn) = Connection::open(&db_path) {
+                                let task_id = crate::db::get_active_task_id();
                                 let _ = conn.execute(
-                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status, task_id)
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                                     (
                                         Uuid::new_v4().to_string(),
                                         get_active_user_id(),
@@ -414,6 +415,7 @@ pub fn start_tracking(app: AppHandle) {
                                         &now.to_rfc3339(),
                                         &now.to_rfc3339(),
                                         "active",
+                                        task_id.as_deref(),
                                     ),
                                 );
                             }
@@ -438,9 +440,10 @@ pub fn start_tracking(app: AppHandle) {
                         if duration > 0 {
                             if let Ok(conn) = Connection::open(&db_path) {
                                 let status = if state == 2 { "paused" } else { "active" };
+                                let task_id = crate::db::get_active_task_id();
                                 let _ = conn.execute(
-                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status, task_id)
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                                     (
                                         Uuid::new_v4().to_string(),
                                         get_active_user_id(),
@@ -452,6 +455,7 @@ pub fn start_tracking(app: AppHandle) {
                                         &now.to_rfc3339(),
                                         &now.to_rfc3339(),
                                         status,
+                                        task_id.as_deref(),
                                     ),
                                 );
                             }
@@ -579,9 +583,10 @@ pub fn start_tracking(app: AppHandle) {
                                 if duration > 0 {
                                     if let Ok(conn) = Connection::open(&db_path) {
                                         let status = if cw.window_title == "Break Time" { "paused" } else { "active" };
+                                        let task_id = crate::db::get_active_task_id();
                                         let _ = conn.execute(
-                                            "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status)
-                                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                            "INSERT INTO time_logs (id, user_id, app_name, window_title, start_time, end_time, duration, created_at, updated_at, status, task_id)
+                                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                                             (
                                                 Uuid::new_v4().to_string(),
                                                 get_active_user_id(),
@@ -593,6 +598,7 @@ pub fn start_tracking(app: AppHandle) {
                                                 &now.to_rfc3339(),
                                                 &now.to_rfc3339(),
                                                 status,
+                                                task_id.as_deref(),
                                             ),
                                         );
 
@@ -605,6 +611,19 @@ pub fn start_tracking(app: AppHandle) {
                                 window_title: window.title.clone(),
                                 start_time: now,
                             };
+
+                            // Auto-detect task from app rules
+                            if let Ok(settings) = crate::db::get_settings(&app) {
+                                if settings.task_auto_detect_enabled {
+                                    if let Some(matched_task_id) = crate::db::match_task_by_app(&app, &new_info.app_name, &new_info.window_title) {
+                                        let current_task = crate::db::get_active_task_id();
+                                        if current_task.as_deref() != Some(&matched_task_id) {
+                                            crate::db::set_active_task_id(Some(matched_task_id.clone()));
+                                            let _ = app.emit("active-task-changed", Some(matched_task_id));
+                                        }
+                                    }
+                                }
+                            }
 
                             if let Some(url_context) = extract_url_from_title(&new_info.app_name, &new_info.window_title, &window.window_id) {
                                 if let Ok(conn) = Connection::open(&db_path) {

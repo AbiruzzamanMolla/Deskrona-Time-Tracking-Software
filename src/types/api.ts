@@ -28,6 +28,7 @@ export type EndpointKey =
   | 'autostart_set' | 'autostart_get'
   | 'calendar_month'
   | 'break_status' | 'break_postpone' | 'break_skip' | 'break_pause' | 'break_resume' | 'break_reset'
+  | 'projects_sync' | 'tasks_sync' | 'task_rules_sync'
   | 'reset_app';
 
 export interface ApiConfigFile {
@@ -413,6 +414,27 @@ export const ENDPOINT_GROUPS: { label: string; key: string; endpoints: ApiEndpoi
         key: 'reset_app', label: 'Factory Reset App', group: 'Reset', method: 'POST',
         requestBody: '{}  // Server deletes all user data and resets to factory state',
         responseBody: '{ "success": true }',
+      },
+    ],
+  },
+  // ── Project Tracking ─────────────────────────────────────────────
+  {
+    label: 'Project Tracking', key: 'project_tracking',
+    endpoints: [
+      {
+        key: 'projects_sync', label: 'Sync Projects', group: 'Project Tracking', method: 'POST',
+        requestBody: '{\n  "projects": [{\n    "id": string,\n    "name": string,\n    "color": string,\n    "archived": boolean,\n    "created_at": string\n  }]\n}',
+        responseBody: '{ "synced": number }',
+      },
+      {
+        key: 'tasks_sync', label: 'Sync Tasks', group: 'Project Tracking', method: 'POST',
+        requestBody: '{\n  "tasks": [{\n    "id": string,\n    "project_id": string,\n    "name": string,\n    "status": string,\n    "created_at": string\n  }]\n}',
+        responseBody: '{ "synced": number }',
+      },
+      {
+        key: 'task_rules_sync', label: 'Sync Task Rules', group: 'Project Tracking', method: 'POST',
+        requestBody: '{\n  "rules": [{\n    "id": string,\n    "task_id": string,\n    "app_name": string,\n    "window_pattern": string | null\n  }]\n}',
+        responseBody: '{ "synced": number }',
       },
     ],
   },

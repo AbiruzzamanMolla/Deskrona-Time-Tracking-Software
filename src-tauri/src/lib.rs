@@ -9,7 +9,7 @@ mod break_reminder;
 use tauri_plugin_autostart::ManagerExt;
 use serde::Serialize;
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
@@ -207,6 +207,19 @@ fn cmd_get_calendar_month(app_handle: tauri::AppHandle, from: String, to: String
 #[tauri::command]
 fn cmd_set_tracking(app_handle: tauri::AppHandle, status: String) -> Result<(), String> {
     tracking::set_tracking_status(&status);
+    
+    // Auto start/stop active task in the database based on tracking status updates from anywhere (frontend or tray menu)
+    if status == "running" {
+        if let Some(task_id) = db::get_active_task_id() {
+            // Failsafe: trigger event to keep frontend UI fully synchronized
+            let _ = app_handle.emit("active-task-changed", Some(task_id));
+        }
+    } else if status == "stopped" {
+        // Halt active task logging in DB but DO NOT broadcast active-task-changed event,
+        // so that the frontend's local activeTaskId/activeTaskName is preserved for resuming.
+        let _ = db::set_active_task_id(None);
+    }
+    
     let _ = app_handle.emit("tracking-status-changed", &status);
     Ok(())
 }
@@ -224,23 +237,31 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let pause_i = MenuItem::with_id(app, "pause", "Pause Tracking", true, None::<&str>)?;
     let stop_i = MenuItem::with_id(app, "stop", "Stop Tracking", true, None::<&str>)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    // Break reminder menu items
+    // Break reminder menu items in a submenu
     let break_status = break_reminder::get_break_state(app);
-    let break_text = format!("Break: {}", break_status.state);
-    let break_item = MenuItem::with_id(app, "break_status", &break_text, false, None::<&str>)?;
+    let break_text = format!("Break Cycle ({})", break_status.state);
+    
     let break_pause_30 = MenuItem::with_id(app, "break_pause_30m", "Pause Breaks 30 min", true, None::<&str>)?;
     let break_pause_1h = MenuItem::with_id(app, "break_pause_1h", "Pause Breaks 1 hour", true, None::<&str>)?;
     let break_pause_2h = MenuItem::with_id(app, "break_pause_2h", "Pause Breaks 2 hours", true, None::<&str>)?;
     let break_pause_5h = MenuItem::with_id(app, "break_pause_5h", "Pause Breaks 5 hours", true, None::<&str>)?;
     let break_resume = MenuItem::with_id(app, "break_resume", "Resume Breaks", true, None::<&str>)?;
     let break_reset = MenuItem::with_id(app, "break_reset", "Reset Break Cycle", true, None::<&str>)?;
+
+    let break_submenu = Submenu::with_items(
+        app,
+        &break_text,
+        true,
+        &[&break_pause_30, &break_pause_1h, &break_pause_2h, &break_pause_5h, &break_resume, &break_reset],
+    )?;
+    
     let sep3 = PredefinedMenuItem::separator(app)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
     Menu::with_items(app, &[
         &status_item, &dashboard_i, &sep1,
         &start_i, &pause_i, &stop_i, &sep2,
-        &break_item, &break_pause_30, &break_pause_1h, &break_pause_2h, &break_pause_5h, &break_resume, &break_reset, &sep3,
+        &break_submenu, &sep3,
         &quit_i,
     ])
 }
@@ -254,6 +275,7 @@ fn cmd_get_tracking() -> Result<String, String> {
 pub struct TrayInfo {
     pub status: String,
     pub elapsed: String,
+    pub active_task_name: Option<String>,
 }
 
 #[tauri::command]
@@ -261,7 +283,13 @@ fn cmd_get_tray_info(app_handle: tauri::AppHandle) -> Result<TrayInfo, String> {
     let status = tracking::get_tracking_status().to_string();
     let total_seconds = db::get_today_active_seconds(&app_handle).unwrap_or(0);
     let elapsed = tracking::format_duration(total_seconds);
-    Ok(TrayInfo { status, elapsed })
+    let active_task_name = if let Some(task_id) = db::get_active_task_id() {
+        let tasks = db::list_tasks(&app_handle, None).unwrap_or_default();
+        tasks.into_iter().find(|t| t.id == task_id).map(|t| t.name)
+    } else {
+        None
+    };
+    Ok(TrayInfo { status, elapsed, active_task_name })
 }
 
 #[tauri::command]
@@ -424,6 +452,102 @@ fn cmd_get_user_input_stats(
 #[tauri::command]
 fn cmd_get_all_app_categories(app_handle: tauri::AppHandle) -> Result<Vec<db::AppCategoryEntry>, String> {
     db::get_all_app_categories(&app_handle).map_err(|e| e.to_string())
+}
+
+// ─── Projects & Tasks Commands ───────────────────────────────────
+
+#[tauri::command]
+fn cmd_create_project(app_handle: tauri::AppHandle, name: String, color: String) -> Result<db::Project, String> {
+    db::create_project(&app_handle, &name, &color).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_list_projects(app_handle: tauri::AppHandle) -> Result<Vec<db::Project>, String> {
+    db::list_projects(&app_handle).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_update_project(app_handle: tauri::AppHandle, id: String, name: Option<String>, color: Option<String>, archived: Option<bool>) -> Result<(), String> {
+    db::update_project(&app_handle, &id, name.as_deref(), color.as_deref(), archived).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_delete_project(app_handle: tauri::AppHandle, id: String) -> Result<(), String> {
+    db::delete_project(&app_handle, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_create_task(app_handle: tauri::AppHandle, project_id: String, name: String) -> Result<db::Task, String> {
+    db::create_task(&app_handle, &project_id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_list_tasks(app_handle: tauri::AppHandle, project_id: Option<String>) -> Result<Vec<db::Task>, String> {
+    db::list_tasks(&app_handle, project_id.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_update_task(app_handle: tauri::AppHandle, id: String, name: Option<String>, status: Option<String>) -> Result<(), String> {
+    db::update_task(&app_handle, &id, name.as_deref(), status.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_delete_task(app_handle: tauri::AppHandle, id: String) -> Result<(), String> {
+    db::delete_task(&app_handle, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_set_active_task(app_handle: tauri::AppHandle, task_id: Option<String>) -> Result<(), String> {
+    db::set_active_task_id(task_id.clone());
+    let _ = app_handle.emit("active-task-changed", task_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn cmd_get_active_task(app_handle: tauri::AppHandle) -> Result<Option<db::Task>, String> {
+    if let Some(task_id) = db::get_active_task_id() {
+        let tasks = db::list_tasks(&app_handle, None).map_err(|e| e.to_string())?;
+        Ok(tasks.into_iter().find(|t| t.id == task_id))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+fn cmd_create_task_rule(app_handle: tauri::AppHandle, task_id: String, app_name: String, window_pattern: Option<String>) -> Result<db::TaskRule, String> {
+    db::create_task_rule(&app_handle, &task_id, &app_name, window_pattern.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_list_task_rules(app_handle: tauri::AppHandle, task_id: Option<String>) -> Result<Vec<db::TaskRule>, String> {
+    db::list_task_rules(&app_handle, task_id.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_delete_task_rule(app_handle: tauri::AppHandle, id: String) -> Result<(), String> {
+    db::delete_task_rule(&app_handle, &id).map_err(|e| e.to_string())
+}
+
+// ─── Reports & Timesheet Commands ────────────────────────────────
+
+#[tauri::command]
+fn cmd_get_project_time_summary(app_handle: tauri::AppHandle, from: String, to: String) -> Result<Vec<db::ProjectTimeSummary>, String> {
+    db::get_project_time_summary(&app_handle, &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_task_time_summary(app_handle: tauri::AppHandle, project_id: Option<String>, from: String, to: String) -> Result<Vec<db::TaskTimeSummary>, String> {
+    db::get_task_time_summary(&app_handle, project_id.as_deref(), &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_timesheet_data(app_handle: tauri::AppHandle, from: String, to: String) -> Result<Vec<db::TimesheetCell>, String> {
+    db::get_timesheet_data(&app_handle, &from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_get_daily_task_summary(app_handle: tauri::AppHandle, date: String) -> Result<Vec<db::DailyTaskEntry>, String> {
+    db::get_daily_task_summary(&app_handle, &date).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -877,6 +1001,23 @@ pub fn run() {
             break_reminder::cmd_break_pause,
             break_reminder::cmd_break_resume,
             break_reminder::cmd_break_reset,
+            cmd_create_project,
+            cmd_list_projects,
+            cmd_update_project,
+            cmd_delete_project,
+            cmd_create_task,
+            cmd_list_tasks,
+            cmd_update_task,
+            cmd_delete_task,
+            cmd_set_active_task,
+            cmd_get_active_task,
+            cmd_create_task_rule,
+            cmd_list_task_rules,
+            cmd_delete_task_rule,
+            cmd_get_project_time_summary,
+            cmd_get_task_time_summary,
+            cmd_get_timesheet_data,
+            cmd_get_daily_task_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
