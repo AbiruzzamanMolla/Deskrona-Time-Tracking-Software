@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.4 — Project Tracking & Tray Menu Improvements
+
+### 🆕 System Tray Submenu
+- Grouped all break reminder options (Pause, Resume, Reset) into a nested "Break Cycle" submenu in the tray menu.
+
+### 💄 Projects View & Task Resuming
+- Auto-resume tracking the last active task when starting tracking.
+- Auto-expand the active task's project in the Projects view list.
+- Stop button on tasks/banners now pauses/stops general tracking instead of clearing active task reference.
+
+### 🐛 Layout & About View Polish
+- Reordered settings tabs (API Config now before About).
+- Removed duplicate developer card in About tab.
+
+
 ## 0.1.3 — Modernized Buttons & Peace Dove Icon
 
 ### 🆕 Peace Dove SVG Icon
